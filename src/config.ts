@@ -29,6 +29,9 @@ export interface AppConfig {
   slack: { botToken: string; appToken: string; channel: string; webhookUrl: string } | undefined;
   // Cal.com scheduling (cloud or self-hosted open-source instance)
   calcom: { apiKey: string; baseUrl: string; bookingUrl: string } | undefined;
+  // Lead generation / prospecting
+  prospectProvider: 'web' | 'apollo' | 'auto';
+  apolloKey: string | undefined;
 }
 
 const DEFAULT_OWNER: Owner = {
@@ -60,6 +63,10 @@ export function loadConfig(): AppConfig {
   const provider: AppConfig['provider'] =
     providerRaw === 'anthropic' || providerRaw === 'ollama' ? providerRaw : 'auto';
 
+  const apolloKey = process.env.APOLLO_API_KEY?.trim();
+  const prospectRaw = (process.env.BIGDOG_PROSPECT_PROVIDER || 'auto').toLowerCase();
+  const prospectProvider: AppConfig['prospectProvider'] =
+    prospectRaw === 'web' || prospectRaw === 'apollo' ? prospectRaw : 'auto';
   const calcomKey = process.env.CALCOM_API_KEY?.trim();
   const tgToken = process.env.TELEGRAM_BOT_TOKEN?.trim();
   const slackBot = process.env.SLACK_BOT_TOKEN?.trim();
@@ -78,6 +85,8 @@ export function loadConfig(): AppConfig {
     accountsConfigPath,
     cadenceStaleDays: Number(process.env.BIGDOG_CADENCE_STALE_DAYS ?? 4),
     agentMaxSteps: Number(process.env.BIGDOG_AGENT_MAX_STEPS ?? 8),
+    prospectProvider,
+    apolloKey,
     provider,
     ollamaHost: process.env.OLLAMA_HOST || 'http://localhost:11434',
     ollamaModel: process.env.OLLAMA_MODEL || 'llama3.1',

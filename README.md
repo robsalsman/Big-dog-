@@ -52,6 +52,11 @@ Beyond triage and drafting, Big Dog is a real agent:
   drafted and waiting for your approval (no-reply/notification senders skipped).
   Toggle with `BIGDOG_AUTODRAFT`. (Inspired by `cloudflare/agentic-inbox`.)
 - **Search** — full-text search across your inbox and pipeline from the Inbox tab.
+- **Prospecting (lead gen)** — ZoomInfo-style: describe your ideal customer and Big
+  Dog sources leads, then one-click them into the pipeline. Free **web research** by
+  default (public data, no signup); add an `APOLLO_API_KEY` for structured B2B search.
+  (Prospect tab, or `/find <criteria>` from a bot.) *No true open-source ZoomInfo
+  exists — the data is proprietary — so this is a pluggable free-backend approach.*
 
 ---
 
@@ -177,6 +182,8 @@ it every few minutes.
 | `BIGDOG_AUTODRAFT` | `on` | Auto-draft a reply when a hot/warm email arrives (`on`/`off`). |
 | `BIGDOG_CADENCE_STALE_DAYS` | `4` | Days of silence before a deal gets a follow-up nudge. |
 | `BIGDOG_AGENT_MAX_STEPS` | `8` | Max tool steps per operator-mode task. |
+| `BIGDOG_PROSPECT_PROVIDER` | `auto` | Lead-gen backend: `web` (free) · `apollo` · `auto`. |
+| `APOLLO_API_KEY` | — | Apollo.io free-tier key for structured B2B prospecting. |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | — | Telegram two-way chat + push target. |
 | `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` / `SLACK_CHANNEL` | — | Slack two-way chat (Socket Mode) + push channel. |
 | `SLACK_WEBHOOK_URL` | — | Slack one-way notifications (alternative to tokens). |
@@ -199,6 +206,7 @@ src/
   agent/agent.ts    Operator mode — autonomous ReAct tool loop (any backend)
   agent/tools.ts    The tools Big Dog can act with (deals, drafts, calendar, memory…)
   cadence.ts        Follow-up engine — nudges for stalled/overdue deals
+  prospect.ts       Lead gen — pluggable backends (web research · Apollo.io)
   digest.ts         Morning brief
   calendar.ts       Unified calendar + .ics export
   calcom.ts         Cal.com booking sync (cloud or self-hosted)

@@ -16,6 +16,8 @@ export interface LLMProvider {
   ping?(): Promise<boolean>;
   /** Optional live web research (lead enrichment). Only backends with web access implement it. */
   webResearch?(query: string): Promise<string>;
+  /** Optional web prospecting — find leads matching criteria, returns a JSON array string. */
+  webProspect?(criteria: string): Promise<string>;
 }
 
 // ── Claude ────────────────────────────────────────────────────────────────
@@ -64,6 +66,31 @@ export class AnthropicProvider implements LLMProvider {
         },
       ],
       tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 4 }],
+    } as Anthropic.MessageCreateParamsNonStreaming);
+
+    return res.content
+      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      .map((b) => b.text)
+      .join('')
+      .trim();
+  }
+
+  async webProspect(criteria: string): Promise<string> {
+    const res = await this.client.messages.create({
+      model: this.model,
+      max_tokens: 2500,
+      messages: [
+        {
+          role: 'user',
+          content:
+            `Find real B2B sales prospects matching this brief, using web search: ${criteria}\n\n` +
+            `Return ONLY a JSON array (no prose) of up to 8 objects, each with keys: ` +
+            `"name", "title", "company", "email" (public/inferred or ""), "linkedin" (URL or ""), ` +
+            `"location" (or ""), "notes" (one line on why they fit / source). ` +
+            `Only include people/companies you actually found evidence for. Do not invent emails — leave "" if unknown.`,
+        },
+      ],
+      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 6 }],
     } as Anthropic.MessageCreateParamsNonStreaming);
 
     return res.content

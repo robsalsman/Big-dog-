@@ -391,12 +391,69 @@ window.ask = async () => {
   } catch (e) { thinking.textContent = 'Error: ' + e.message; }
 };
 
+// ── Prospect (lead gen) ──────────────────────────────────────────────────
+function renderProspect() {
+  const el = $('#prospect');
+  if (el.dataset.init) return;
+  el.dataset.init = '1';
+  const prov = state.prospect || { name: 'web', ready: true };
+  el.innerHTML = `
+    <div class="row" style="margin-bottom:6px">
+      <h2>Prospect — find new leads</h2>
+      <span class="pill">${prov.name === 'apollo' ? 'Apollo.io' : 'web research'}</span>
+    </div>
+    <div class="muted small" style="margin-bottom:12px">
+      Describe your ideal customer — title, industry, company stage, location, or a domain.
+      ${prov.name === 'web' ? 'Using free web research (public data — verify before outreach). Add an APOLLO_API_KEY for structured B2B search.' : 'Using Apollo.io structured search.'}
+    </div>
+    <div class="chat-input">
+      <input id="prospect-q" placeholder="e.g. Heads of RevOps at Series B SaaS in the US" />
+      <button class="btn primary" onclick="findLeads()">🐕 Find leads</button>
+    </div>
+    <div id="prospect-out" style="margin-top:14px"></div>`;
+  $('#prospect-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') findLeads(); });
+}
+
+window.findLeads = async () => {
+  const q = $('#prospect-q').value.trim();
+  if (!q) return;
+  const out = $('#prospect-out');
+  out.innerHTML = '<div class="muted">🐕 Hunting…</div>';
+  try {
+    const { prospects } = await api('/api/prospect/find', { method: 'POST', body: { criteria: q } });
+    if (!prospects.length) { out.innerHTML = '<div class="empty">No leads found. Try a broader brief, or add an APOLLO_API_KEY.</div>'; return; }
+    out.innerHTML = prospects.map((p, i) => `
+      <div class="card">
+        <div class="row">
+          <div>
+            <strong>${esc(p.name)}</strong> ${p.title ? `<span class="muted small">${esc(p.title)}</span>` : ''}
+            <div>${esc(p.company)} ${p.location ? `<span class="muted small">· ${esc(p.location)}</span>` : ''}</div>
+            ${p.email ? `<div class="small">✉ ${esc(p.email)}</div>` : '<div class="muted small">✉ no email yet</div>'}
+            ${p.linkedin ? `<div class="small"><a href="${esc(p.linkedin)}" target="_blank">LinkedIn</a></div>` : ''}
+            ${p.notes ? `<div class="muted small">🐕 ${esc(p.notes)}</div>` : ''}
+          </div>
+          <div><button class="btn small primary" onclick='addLead(${JSON.stringify(JSON.stringify(p))})'>+ Pipeline</button></div>
+        </div>
+      </div>`).join('');
+  } catch (e) { out.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+};
+
+window.addLead = async (pjson) => {
+  try {
+    const prospect = JSON.parse(pjson);
+    await api('/api/prospect/save', { method: 'POST', body: { prospect } });
+    await load();
+    toast(`Added ${prospect.name} to the pipeline. 🐕`);
+  } catch (e) { toast('Error: ' + e.message); }
+};
+
 // ── Tabs ─────────────────────────────────────────────────────────────────
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
   document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === name));
   if (name === 'digest') renderDigest();
   if (name === 'chat') renderChat();
+  if (name === 'prospect') renderProspect();
 }
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));
 

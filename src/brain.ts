@@ -1,6 +1,6 @@
 import { bigDogSystemPrompt } from './persona.js';
 import type { LLMProvider } from './llm/provider.js';
-import type { Message, Deal, CalendarEvent, MessageAnalysis, Owner } from './types.js';
+import type { Message, Deal, CalendarEvent, MessageAnalysis, Owner, Prospect } from './types.js';
 
 /**
  * The Big Dog brain. Wraps whatever LLM backend is configured (Claude or a
@@ -32,6 +32,27 @@ export class BigDogBrain {
   /** Raw persona-grounded completion — used by the agent loop. */
   async raw(user: string, schema?: object, maxTokens = 1200): Promise<string> {
     return this.provider.complete({ system: this.system, user, schema, maxTokens });
+  }
+
+  /** Find prospects from public web data (only when the backend has web access). */
+  async prospect(criteria: string): Promise<Prospect[]> {
+    if (!this.provider.webProspect) return [];
+    try {
+      const out = await this.provider.webProspect(criteria);
+      const arr = JSON.parse(extractJsonArray(out)) as Partial<Prospect>[];
+      return arr.map((p) => ({
+        name: String(p.name ?? ''),
+        title: String(p.title ?? ''),
+        company: String(p.company ?? ''),
+        email: String(p.email ?? ''),
+        linkedin: String(p.linkedin ?? ''),
+        location: String(p.location ?? ''),
+        source: 'web',
+        notes: String(p.notes ?? ''),
+      }));
+    } catch {
+      return [];
+    }
   }
 
   /** Live web research on a lead (only when the backend supports it). */
@@ -250,6 +271,16 @@ export class BigDogBrain {
       return `Big Dog hit a snag reaching the model (${(err as Error).message}). Check your provider is up.`;
     }
   }
+}
+
+/** Pull a JSON array out of a model response that may wrap it in prose/fences. */
+function extractJsonArray(text: string): string {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const body = fenced?.[1] ?? text;
+  const start = body.indexOf('[');
+  const end = body.lastIndexOf(']');
+  if (start !== -1 && end > start) return body.slice(start, end + 1);
+  return '[]';
 }
 
 /** Pull a JSON object out of a model response that may wrap it in prose/fences. */

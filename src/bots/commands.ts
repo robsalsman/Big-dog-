@@ -4,6 +4,7 @@ import { triageNewMail } from '../pipeline.js';
 import { generateDigest } from '../digest.js';
 import { runAgent } from '../agent/agent.js';
 import { runCadenceSweep } from '../cadence.js';
+import { findProspects } from '../prospect.js';
 import type { BigDogBrain } from '../brain.js';
 import type { AppConfig } from '../config.js';
 import type { AccountsConfig } from '../types.js';
@@ -18,6 +19,7 @@ const HELP = [
   "What's up, Big Dog! 🐕 Here's what I answer to:",
   '',
   '• /do <goal> — go DO it (draft, schedule, update deals…)',
+  '• /find <criteria> — prospect for new leads (lead gen)',
   '• /research <who> — web brief on a person or company',
   '• /followups — queue nudges for stalled deals',
   '• /brief — your morning rundown',
@@ -85,6 +87,19 @@ export async function routeMessage(rawText: string, deps: BotDeps): Promise<stri
     const q = text.slice(9).trim();
     if (!q) return 'Who should I research? e.g. /research Acme Corp';
     return deps.brain.research(q);
+  }
+
+  if (cmd.startsWith('/find ') || cmd === '/find') {
+    const q = text.slice(5).trim();
+    if (!q) return 'Describe who to find, e.g. /find VP Sales at Series B fintechs in Texas';
+    const prospects = await findProspects(q, deps.cfg, deps.brain);
+    if (!prospects.length) return 'No prospects found (or the web/Apollo backend isn\'t configured). 🐕';
+    return (
+      `🐕 Found ${prospects.length}:\n` +
+      prospects
+        .map((p) => `• ${p.name}${p.title ? ', ' + p.title : ''}${p.company ? ' @ ' + p.company : ''}${p.email ? ' — ' + p.email : ''}`)
+        .join('\n')
+    );
   }
 
   if (cmd === '/followups' || cmd === 'followups') {

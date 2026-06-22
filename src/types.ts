@@ -102,6 +102,18 @@ export interface Digest {
   createdAt: string;
 }
 
+/** A sourced sales prospect (ZoomInfo-style lead gen). */
+export interface Prospect {
+  name: string;
+  title: string;
+  company: string;
+  email: string;
+  linkedin: string;
+  location: string;
+  source: string; // 'web' | 'apollo'
+  notes: string;
+}
+
 /** What Claude returns when triaging a single inbound message. */
 export interface MessageAnalysis {
   priority: 'hot' | 'warm' | 'cold';

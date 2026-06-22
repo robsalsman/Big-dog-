@@ -5,6 +5,8 @@ import { dirname, resolve } from 'node:path';
 import { messages, deals, events, drafts, memories } from './db.js';
 import { runAgent } from './agent/agent.js';
 import { runCadenceSweep } from './cadence.js';
+import { findProspects, saveProspectAsDeal, activeProvider } from './prospect.js';
+import type { Prospect } from './types.js';
 import { syncAll } from './mail/ingest.js';
 import { sendMail } from './mail/send.js';
 import { triageNewMail } from './pipeline.js';
@@ -38,6 +40,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       accounts: accountsCfg.accounts.map((a) => ({ id: a.id, label: a.label, email: a.email })),
       stages: DEAL_STAGES,
       calcom: { configured: calcomConfigured(cfg), bookingUrl: cfg.calcom?.bookingUrl ?? '' },
+      prospect: activeProvider(cfg),
       messages: messages.recent(100),
       deals: deals.all(),
       events: events.all(),
@@ -273,6 +276,24 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
 
   app.get('/api/memory/:email', (req, res) => {
     res.json({ recall: memories.recall(req.params.email) });
+  });
+
+  // ── Prospecting / lead gen ──────────────────────────────────────────
+  app.post('/api/prospect/find', async (req, res) => {
+    const criteria = (req.body?.criteria as string) ?? '';
+    if (!criteria.trim()) return res.status(400).json({ error: 'describe who to find' });
+    try {
+      const prospects = await findProspects(criteria, cfg, brain);
+      res.json({ provider: activeProvider(cfg), prospects });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/prospect/save', (req, res) => {
+    const p = req.body?.prospect as Prospect | undefined;
+    if (!p || !p.name) return res.status(400).json({ error: 'no prospect' });
+    res.json({ deal: saveProspectAsDeal(p) });
   });
 
   // ── Search across the inbox + pipeline ──────────────────────────────
