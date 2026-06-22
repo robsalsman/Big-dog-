@@ -44,6 +44,7 @@ export class BigDogBrain {
         name: String(p.name ?? ''),
         title: String(p.title ?? ''),
         company: String(p.company ?? ''),
+        domain: String(p.domain ?? ''),
         email: String(p.email ?? ''),
         linkedin: String(p.linkedin ?? ''),
         location: String(p.location ?? ''),

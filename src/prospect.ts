@@ -1,8 +1,36 @@
 import { randomUUID } from 'node:crypto';
 import { deals, memories } from './db.js';
+import { findEmail, type EmailResult } from './emailfinder.js';
 import type { AppConfig } from './config.js';
 import type { BigDogBrain } from './brain.js';
 import type { Prospect, Deal } from './types.js';
+
+function domainFromUrl(url?: string): string | undefined {
+  if (!url) return undefined;
+  try {
+    return new URL(url.startsWith('http') ? url : `https://${url}`).hostname.replace(/^www\./, '');
+  } catch {
+    return undefined;
+  }
+}
+
+/** Find (and SMTP-verify where possible) a contact's email from name + domain. */
+export async function findContactEmail(input: {
+  name?: string;
+  firstName?: string;
+  lastName?: string;
+  domain: string;
+}): Promise<EmailResult> {
+  let first = input.firstName ?? '';
+  let last = input.lastName ?? '';
+  if (!first && input.name) {
+    const parts = input.name.trim().split(/\s+/);
+    first = parts[0] ?? '';
+    last = parts.slice(1).join(' ');
+  }
+  const domain = domainFromUrl(input.domain) ?? input.domain;
+  return findEmail({ firstName: first, lastName: last, domain });
+}
 
 /**
  * Lead generation, ZoomInfo-style — pluggable so you're never locked in.
@@ -60,7 +88,7 @@ interface ApolloPerson {
   city?: string;
   state?: string;
   country?: string;
-  organization?: { name?: string };
+  organization?: { name?: string; primary_domain?: string; website_url?: string };
 }
 
 async function apolloSearch(apiKey: string, criteria: string): Promise<Prospect[]> {
@@ -79,6 +107,7 @@ async function apolloSearch(apiKey: string, criteria: string): Promise<Prospect[
       name: p.name ?? '',
       title: p.title ?? '',
       company: p.organization?.name ?? '',
+      domain: p.organization?.primary_domain ?? domainFromUrl(p.organization?.website_url) ?? '',
       email,
       linkedin: p.linkedin_url ?? '',
       location: [p.city, p.state, p.country].filter(Boolean).join(', '),

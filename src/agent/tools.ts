@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { messages, deals, events, drafts, memories } from '../db.js';
+import { findContactEmail } from '../prospect.js';
 import type { BigDogBrain } from '../brain.js';
 import type { AppConfig } from '../config.js';
 import type { AccountsConfig, Deal, DealStage, Draft, CalendarEvent } from '../types.js';
@@ -193,6 +194,15 @@ export function buildToolset(ctx: AgentContext): AgentTool[] {
       async run(args) {
         if (!args.query) return 'Need {query}.';
         return ctx.brain.research(String(args.query));
+      },
+    },
+    {
+      name: 'find_email',
+      description: 'Find + SMTP-verify a contact\'s work email from a name and company domain. args: {name, domain}.',
+      async run(args) {
+        if (!args.name || !args.domain) return 'Need {name, domain}.';
+        const r = await findContactEmail({ name: String(args.name), domain: String(args.domain) });
+        return `${r.email} — ${r.confidence} (${r.method})`;
       },
     },
   ];

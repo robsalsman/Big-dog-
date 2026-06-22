@@ -85,7 +85,8 @@ export class AnthropicProvider implements LLMProvider {
           content:
             `Find real B2B sales prospects matching this brief, using web search: ${criteria}\n\n` +
             `Return ONLY a JSON array (no prose) of up to 8 objects, each with keys: ` +
-            `"name", "title", "company", "email" (public/inferred or ""), "linkedin" (URL or ""), ` +
+            `"name", "title", "company", "domain" (company email domain like "acme.com" or ""), ` +
+            `"email" (public/inferred or ""), "linkedin" (URL or ""), ` +
             `"location" (or ""), "notes" (one line on why they fit / source). ` +
             `Only include people/companies you actually found evidence for. Do not invent emails — leave "" if unknown.`,
         },

@@ -428,19 +428,36 @@ window.findLeads = async () => {
           <div>
             <strong>${esc(p.name)}</strong> ${p.title ? `<span class="muted small">${esc(p.title)}</span>` : ''}
             <div>${esc(p.company)} ${p.location ? `<span class="muted small">· ${esc(p.location)}</span>` : ''}</div>
-            ${p.email ? `<div class="small">✉ ${esc(p.email)}</div>` : '<div class="muted small">✉ no email yet</div>'}
+            <div class="small" id="lead-email-${i}">${p.email ? `✉ ${esc(p.email)}` : '<span class="muted">✉ no email yet</span>'}</div>
             ${p.linkedin ? `<div class="small"><a href="${esc(p.linkedin)}" target="_blank">LinkedIn</a></div>` : ''}
             ${p.notes ? `<div class="muted small">🐕 ${esc(p.notes)}</div>` : ''}
           </div>
-          <div><button class="btn small primary" onclick='addLead(${JSON.stringify(JSON.stringify(p))})'>+ Pipeline</button></div>
+          <div style="white-space:nowrap">
+            ${!p.email && (p.domain || p.company) ? `<button class="btn small" onclick="findEmail(${i}, '${esc(p.name)}', '${esc(p.domain || '')}')">✉ Find email</button>` : ''}
+            <button class="btn small primary" onclick='addLead(${JSON.stringify(JSON.stringify(p))}, ${i})'>+ Pipeline</button>
+          </div>
         </div>
       </div>`).join('');
+  window.__leads = prospects;
   } catch (e) { out.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
 };
 
-window.addLead = async (pjson) => {
+window.findEmail = async (i, name, domain) => {
+  if (!domain) { domain = prompt('Company domain? (e.g. acme.com)') || ''; if (!domain) return; }
+  const slot = $('#lead-email-' + i);
+  slot.innerHTML = '<span class="muted">✉ finding…</span>';
+  try {
+    const r = await api('/api/prospect/email', { method: 'POST', body: { name, domain } });
+    const tag = r.confidence === 'verified' ? 'good' : r.confidence === 'guess' ? 'warm' : 'cold';
+    slot.innerHTML = `✉ ${esc(r.email)} <span class="tag ${tag === 'good' ? 'warm' : tag}">${esc(r.confidence)}</span><div class="muted small">${esc(r.method)}</div>`;
+    if (window.__leads && window.__leads[i]) { window.__leads[i].email = r.email; window.__leads[i].domain = domain; }
+  } catch (e) { slot.innerHTML = '<span class="muted">error: ' + esc(e.message) + '</span>'; }
+};
+
+window.addLead = async (pjson, i) => {
   try {
     const prospect = JSON.parse(pjson);
+    if (i != null && window.__leads && window.__leads[i]) prospect.email = window.__leads[i].email || prospect.email;
     await api('/api/prospect/save', { method: 'POST', body: { prospect } });
     await load();
     toast(`Added ${prospect.name} to the pipeline. 🐕`);

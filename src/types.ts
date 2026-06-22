@@ -107,6 +107,7 @@ export interface Prospect {
   name: string;
   title: string;
   company: string;
+  domain: string; // company email domain, for email finding
   email: string;
   linkedin: string;
   location: string;

@@ -4,7 +4,7 @@ import { triageNewMail } from '../pipeline.js';
 import { generateDigest } from '../digest.js';
 import { runAgent } from '../agent/agent.js';
 import { runCadenceSweep } from '../cadence.js';
-import { findProspects } from '../prospect.js';
+import { findProspects, findContactEmail } from '../prospect.js';
 import type { BigDogBrain } from '../brain.js';
 import type { AppConfig } from '../config.js';
 import type { AccountsConfig } from '../types.js';
@@ -20,6 +20,7 @@ const HELP = [
   '',
   '• /do <goal> — go DO it (draft, schedule, update deals…)',
   '• /find <criteria> — prospect for new leads (lead gen)',
+  '• /email <name> at <domain> — find + verify a work email',
   '• /research <who> — web brief on a person or company',
   '• /followups — queue nudges for stalled deals',
   '• /brief — your morning rundown',
@@ -100,6 +101,15 @@ export async function routeMessage(rawText: string, deps: BotDeps): Promise<stri
         .map((p) => `• ${p.name}${p.title ? ', ' + p.title : ''}${p.company ? ' @ ' + p.company : ''}${p.email ? ' — ' + p.email : ''}`)
         .join('\n')
     );
+  }
+
+  // /email Jane Doe at acme.com
+  if (cmd.startsWith('/email ') || cmd === '/email') {
+    const rest = text.slice(6).trim();
+    const m = rest.match(/^(.*?)\s+(?:at|@)\s+(\S+)$/i);
+    if (!m) return 'Format: /email <name> at <domain> — e.g. /email Jane Doe at acme.com';
+    const r = await findContactEmail({ name: m[1]!.trim(), domain: m[2]!.trim() });
+    return `🐕 ${r.email}\n${r.confidence.toUpperCase()} — ${r.method}`;
   }
 
   if (cmd === '/followups' || cmd === 'followups') {

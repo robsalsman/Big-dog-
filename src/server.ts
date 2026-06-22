@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { messages, deals, events, drafts, memories } from './db.js';
 import { runAgent } from './agent/agent.js';
 import { runCadenceSweep } from './cadence.js';
-import { findProspects, saveProspectAsDeal, activeProvider } from './prospect.js';
+import { findProspects, saveProspectAsDeal, activeProvider, findContactEmail } from './prospect.js';
 import type { Prospect } from './types.js';
 import { syncAll } from './mail/ingest.js';
 import { sendMail } from './mail/send.js';
@@ -294,6 +294,18 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const p = req.body?.prospect as Prospect | undefined;
     if (!p || !p.name) return res.status(400).json({ error: 'no prospect' });
     res.json({ deal: saveProspectAsDeal(p) });
+  });
+
+  // Find + verify a contact's email from name + domain (Hunter-style engine).
+  app.post('/api/prospect/email', async (req, res) => {
+    const domain = (req.body?.domain as string) ?? '';
+    const name = (req.body?.name as string) ?? '';
+    if (!domain.trim() || !name.trim()) return res.status(400).json({ error: 'need name and domain' });
+    try {
+      res.json(await findContactEmail({ name, domain }));
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   // ── Search across the inbox + pipeline ──────────────────────────────

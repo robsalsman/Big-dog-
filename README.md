@@ -57,6 +57,12 @@ Beyond triage and drafting, Big Dog is a real agent:
   default (public data, no signup); add an `APOLLO_API_KEY` for structured B2B search.
   (Prospect tab, or `/find <criteria>` from a bot.) *No true open-source ZoomInfo
   exists — the data is proprietary — so this is a pluggable free-backend approach.*
+- **Email finder + verifier** — the same engine Hunter.io charges for, built in and
+  free: from a name + company domain it permutes the likely addresses, finds the
+  domain's mail server, and SMTP-`RCPT`-probes each (no email is ever sent) to return
+  a **verified** address — with catch-all detection and honest confidence labels.
+  ("Find email" on any sourced lead, `/email <name> at <domain>` from a bot, or the
+  `find_email` operator tool.)
 
 ---
 
@@ -114,6 +120,30 @@ CALCOM_BOOKING_URL=https://cal.com/rob # your public booking link
 
 Bookings sync on the same interval as mail (and on demand from the Calendar tab).
 Without Cal.com configured, the built-in calendar + `.ics` feed still work.
+
+---
+
+## How the email finder works (and its limits)
+
+This is what Hunter.io/Apollo's email-finding actually is — an algorithm, not a
+database, so Big Dog does it for free:
+
+1. **Permute** — generate the common corporate patterns from a name + domain
+   (`first.last@`, `flast@`, `first@`, …).
+2. **MX lookup** — find the domain's real mail server.
+3. **SMTP probe** — open a session and `RCPT TO` each candidate. The server says
+   whether the mailbox exists. **No email is ever sent.** A random-address probe
+   detects **catch-all** domains (which accept everything and can't be verified).
+
+Confidence is honest: `verified` (server confirmed), `guess` (catch-all domain), or
+`unverified` (best-pattern fallback).
+
+> **The catch:** SMTP verification needs outbound **port 25**, which many ISPs and
+> cloud hosts block, and Gmail/Microsoft 365 deliberately defeat probing. When it
+> can't verify, Big Dog returns the best-pattern guess clearly labelled
+> `unverified` — it never fakes a "verified". For reliable verification at scale you
+> need a host with port 25 egress (or a paid verifier's IP pool) — that's exactly
+> what you're paying Hunter for.
 
 ---
 
@@ -207,6 +237,7 @@ src/
   agent/tools.ts    The tools Big Dog can act with (deals, drafts, calendar, memory…)
   cadence.ts        Follow-up engine — nudges for stalled/overdue deals
   prospect.ts       Lead gen — pluggable backends (web research · Apollo.io)
+  emailfinder.ts    Free email finder + SMTP verifier (Hunter-style engine)
   digest.ts         Morning brief
   calendar.ts       Unified calendar + .ics export
   calcom.ts         Cal.com booking sync (cloud or self-hosted)
