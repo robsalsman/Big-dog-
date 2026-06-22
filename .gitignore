@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Secrets & local config
+.env
+config/accounts.json
+
+# Local data (mail cache, deals, calendar)
+data/
+*.sqlite
+*.sqlite-journal
+*.db
+
+# Logs / OS
+*.log
+.DS_Store

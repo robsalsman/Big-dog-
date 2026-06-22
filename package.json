@@ -1,0 +1,34 @@
+{
+  "name": "big-dog",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Big Dog — your inside-sales SDR + secretary clone. One inbox, one calendar, deals worked for you.",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20.6.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.105.0",
+    "better-sqlite3": "^11.3.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "ics": "^3.8.1",
+    "imapflow": "^1.0.171",
+    "mailparser": "^3.7.1",
+    "nodemailer": "^6.9.15"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/express": "^4.17.21",
+    "@types/mailparser": "^3.4.4",
+    "@types/node": "^22.5.0",
+    "@types/nodemailer": "^6.4.16",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

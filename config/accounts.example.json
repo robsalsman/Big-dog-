@@ -1,0 +1,52 @@
+{
+  "_comment": "Copy this file to config/accounts.json (gitignored) and add your real mailboxes. Big Dog pulls them all into one inbox. Works with any IMAP/SMTP provider: Gmail (use an App Password), Outlook/Microsoft 365, Fastmail, Yahoo, cPanel, custom domains, etc.",
+
+  "owner": {
+    "name": "Rob",
+    "title": "Founder / CEO",
+    "company": "Big Dog Co",
+    "signature": "Rob\nFounder, Big Dog Co\n(555) 010-1234",
+    "voiceNotes": "Warm but direct. CEO-level. Drives toward a next step on every thread. Short paragraphs, no corporate fluff, never desperate. Opens warm, closes with a clear ask. Confident hustle."
+  },
+
+  "accounts": [
+    {
+      "id": "work-gmail",
+      "label": "Work (Gmail)",
+      "email": "you@yourcompany.com",
+      "imap": {
+        "host": "imap.gmail.com",
+        "port": 993,
+        "secure": true,
+        "user": "you@yourcompany.com",
+        "pass": "your-16-char-app-password"
+      },
+      "smtp": {
+        "host": "smtp.gmail.com",
+        "port": 465,
+        "secure": true,
+        "user": "you@yourcompany.com",
+        "pass": "your-16-char-app-password"
+      }
+    },
+    {
+      "id": "deals-outlook",
+      "label": "Deals (Outlook)",
+      "email": "you@outlook.com",
+      "imap": {
+        "host": "outlook.office365.com",
+        "port": 993,
+        "secure": true,
+        "user": "you@outlook.com",
+        "pass": "your-password-or-app-password"
+      },
+      "smtp": {
+        "host": "smtp.office365.com",
+        "port": 587,
+        "secure": false,
+        "user": "you@outlook.com",
+        "pass": "your-password-or-app-password"
+      }
+    }
+  ]
+}

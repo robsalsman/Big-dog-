@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Big Dog</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐕</text></svg>"
+    />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">🐕</span>
+        <div>
+          <h1>Big Dog</h1>
+          <p id="tagline">What's up, Big Dog!?</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span id="brain-pill" class="pill">brain: …</span>
+        <button id="sync-btn" class="btn primary">Sync &amp; work the inbox</button>
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="inbox">Inbox <span id="inbox-count" class="badge"></span></button>
+      <button class="tab" data-tab="pipeline">Pipeline <span id="pipeline-count" class="badge"></span></button>
+      <button class="tab" data-tab="calendar">Calendar <span id="cal-count" class="badge"></span></button>
+      <button class="tab" data-tab="drafts">Drafts <span id="drafts-count" class="badge"></span></button>
+      <button class="tab" data-tab="digest">Morning brief</button>
+      <button class="tab" data-tab="chat">Ask Big Dog</button>
+    </nav>
+
+    <main id="main">
+      <section id="inbox" class="panel active"></section>
+      <section id="pipeline" class="panel"></section>
+      <section id="calendar" class="panel"></section>
+      <section id="drafts" class="panel"></section>
+      <section id="digest" class="panel"></section>
+      <section id="chat" class="panel"></section>
+    </main>
+
+    <div id="toast" class="toast"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>
