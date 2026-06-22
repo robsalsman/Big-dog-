@@ -56,6 +56,18 @@ export class BigDogBrain {
     }
   }
 
+  /** Find one known (name, email) at a domain — used to learn its email format. */
+  async knownEmail(domain: string): Promise<{ name: string; email: string } | null> {
+    if (!this.provider.webFindEmail) return null;
+    try {
+      const out = await this.provider.webFindEmail(domain);
+      const o = JSON.parse(extractJson(out)) as { name?: string; email?: string };
+      return o.email && o.email.includes('@') ? { name: String(o.name ?? ''), email: String(o.email) } : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** Live web research on a lead (only when the backend supports it). */
   async research(query: string): Promise<string> {
     if (this.provider.webResearch) {

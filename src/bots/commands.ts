@@ -108,7 +108,7 @@ export async function routeMessage(rawText: string, deps: BotDeps): Promise<stri
     const rest = text.slice(6).trim();
     const m = rest.match(/^(.*?)\s+(?:at|@)\s+(\S+)$/i);
     if (!m) return 'Format: /email <name> at <domain> — e.g. /email Jane Doe at acme.com';
-    const r = await findContactEmail({ name: m[1]!.trim(), domain: m[2]!.trim() });
+    const r = await findContactEmail({ name: m[1]!.trim(), domain: m[2]!.trim() }, deps.brain);
     return `🐕 ${r.email}\n${r.confidence.toUpperCase()} — ${r.method}`;
   }
 

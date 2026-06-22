@@ -201,7 +201,7 @@ export function buildToolset(ctx: AgentContext): AgentTool[] {
       description: 'Find + SMTP-verify a contact\'s work email from a name and company domain. args: {name, domain}.',
       async run(args) {
         if (!args.name || !args.domain) return 'Need {name, domain}.';
-        const r = await findContactEmail({ name: String(args.name), domain: String(args.domain) });
+        const r = await findContactEmail({ name: String(args.name), domain: String(args.domain) }, ctx.brain);
         return `${r.email} — ${r.confidence} (${r.method})`;
       },
     },

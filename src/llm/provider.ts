@@ -18,6 +18,8 @@ export interface LLMProvider {
   webResearch?(query: string): Promise<string>;
   /** Optional web prospecting — find leads matching criteria, returns a JSON array string. */
   webProspect?(criteria: string): Promise<string>;
+  /** Optional — find one known (name, email) at a domain to learn its email format. */
+  webFindEmail?(domain: string): Promise<string>;
 }
 
 // ── Claude ────────────────────────────────────────────────────────────────
@@ -92,6 +94,30 @@ export class AnthropicProvider implements LLMProvider {
         },
       ],
       tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 6 }],
+    } as Anthropic.MessageCreateParamsNonStreaming);
+
+    return res.content
+      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      .map((b) => b.text)
+      .join('')
+      .trim();
+  }
+
+  async webFindEmail(domain: string): Promise<string> {
+    const res = await this.client.messages.create({
+      model: this.model,
+      max_tokens: 600,
+      messages: [
+        {
+          role: 'user',
+          content:
+            `Find ONE named employee at the company on domain "${domain}" whose work email address (ending @${domain}) ` +
+            `is publicly listed (team page, press release, paper, signature, etc.). ` +
+            `Return ONLY JSON: {"name": "Full Name", "email": "their@${domain}"} — or {} if you can't find a real one. ` +
+            `Do not guess or invent the email; it must be one you actually found.`,
+        },
+      ],
+      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }],
     } as Anthropic.MessageCreateParamsNonStreaming);
 
     return res.content

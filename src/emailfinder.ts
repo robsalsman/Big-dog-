@@ -21,31 +21,55 @@ export interface EmailResult {
   confidence: Confidence;
   method: string;
   candidates: string[];
+  pattern?: string; // the learned pattern key applied, if any
 }
 
 const PROBE_FROM = 'verify@bigdog.local';
 
-function clean(s: string): string {
+export function clean(s: string): string {
   return (s || '').toLowerCase().normalize('NFKD').replace(/[^a-z]/g, '');
+}
+
+/** Named corporate email patterns. Keys are stable identifiers we can learn + cache. */
+export const PATTERNS: Record<string, (f: string, l: string) => string> = {
+  'first.last': (f, l) => (l ? `${f}.${l}` : f),
+  firstlast: (f, l) => (l ? `${f}${l}` : f),
+  flast: (f, l) => (l ? `${f[0] ?? ''}${l}` : f),
+  first: (f) => f,
+  first_last: (f, l) => (l ? `${f}_${l}` : f),
+  'f.last': (f, l) => (l ? `${f[0] ?? ''}.${l}` : f),
+  firstl: (f, l) => (l ? `${f}${l[0] ?? ''}` : f),
+  'first.l': (f, l) => (l ? `${f}.${l[0] ?? ''}` : f),
+  'last.first': (f, l) => (l ? `${l}.${f}` : f),
+  lastfirst: (f, l) => (l ? `${l}${f}` : f),
+  'f.l': (f, l) => (l ? `${f[0] ?? ''}.${l[0] ?? ''}` : f),
+};
+
+// Ordered roughly by real-world prevalence (drives candidate-guess order).
+const PATTERN_ORDER = Object.keys(PATTERNS);
+
+/** Render a pattern key into a local-part for a given name. */
+export function renderLocal(key: string, first: string, last: string): string {
+  const fn = PATTERNS[key];
+  return fn ? fn(clean(first), clean(last)) : '';
+}
+
+/** Given a known email local-part and the person's name, deduce the pattern key. */
+export function inferPatternKey(localPart: string, first: string, last: string): string | null {
+  const target = localPart.toLowerCase();
+  const f = clean(first);
+  const l = clean(last);
+  for (const key of PATTERN_ORDER) {
+    if (PATTERNS[key]!(f, l) === target) return key;
+  }
+  return null;
 }
 
 /** Common corporate email patterns, ordered roughly by real-world prevalence. */
 export function candidateLocals(first: string, last: string): string[] {
   const f = clean(first);
   const l = clean(last);
-  const fi = f[0] ?? '';
-  const li = l[0] ?? '';
-  const out = [
-    l ? `${f}.${l}` : f,
-    l ? `${f}${l}` : f,
-    l ? `${fi}${l}` : f,
-    f,
-    l ? `${f}_${l}` : f,
-    l ? `${fi}.${l}` : f,
-    l ? `${f}${li}` : f,
-    l ? `${l}.${f}` : l,
-    l ? `${l}${f}` : l,
-  ];
+  const out = PATTERN_ORDER.map((k) => PATTERNS[k]!(f, l));
   return out.filter((v, i, a) => v && v.length > 1 && a.indexOf(v) === i);
 }
 
@@ -153,19 +177,31 @@ export interface FindEmailInput {
   domain: string;
   host?: string; // override MX lookup (used in tests)
   port?: number;
-  knownPattern?: string; // a known-good local-part to try first
+  learnedKey?: string; // a learned company pattern key to try first / fall back to
 }
 
 export async function findEmail(input: FindEmailInput): Promise<EmailResult> {
-  const { firstName, lastName, domain } = input;
-  const locals = candidateLocals(firstName, lastName);
-  if (input.knownPattern && !locals.includes(input.knownPattern)) locals.unshift(input.knownPattern);
+  const { firstName, lastName, domain, learnedKey } = input;
+  let locals = candidateLocals(firstName, lastName);
+  const learnedLocal = learnedKey ? renderLocal(learnedKey, firstName, lastName) : '';
+  // Always try the learned company pattern first (even if it's also a standard guess).
+  if (learnedLocal) locals = [learnedLocal, ...locals.filter((l) => l !== learnedLocal)];
   const candidates = locals.map((l) => `${l}@${domain}`);
-  const best = candidates[0] ?? `${clean(firstName)}@${domain}`;
+  // With a learned company pattern, the learned address is the best bet; else the top guess.
+  const best = (learnedLocal ? `${learnedLocal}@${domain}` : candidates[0]) ?? `${clean(firstName)}@${domain}`;
+  const learnedNote = learnedKey ? ` learned company pattern (${learnedKey})` : '';
+  // Learned pattern lifts unverifiable results from "unverified" up to "guess".
+  const unverifiedConf: Confidence = learnedKey ? 'guess' : 'unverified';
 
   const host = input.host ?? (await mxHost(domain));
   if (!host) {
-    return { email: best, confidence: 'unverified', method: 'no MX record for domain', candidates };
+    return {
+      email: best,
+      confidence: unverifiedConf,
+      method: learnedKey ? `${learnedNote.trim()}; no MX to verify` : 'no MX record for domain',
+      candidates,
+      pattern: learnedKey,
+    };
   }
 
   // One probe to a random address: tests reachability AND catch-all in one shot.
@@ -174,21 +210,34 @@ export async function findEmail(input: FindEmailInput): Promise<EmailResult> {
   if (!(random in pre)) {
     return {
       email: best,
-      confidence: 'unverified',
-      method: 'SMTP probe blocked or unreachable (port 25)',
+      confidence: unverifiedConf,
+      method: learnedKey ? `${learnedNote.trim()}; SMTP probe blocked (port 25)` : 'SMTP probe blocked or unreachable (port 25)',
       candidates,
+      pattern: learnedKey,
     };
   }
   if (classify(pre[random]) === 'valid') {
-    return { email: best, confidence: 'guess', method: 'catch-all domain (accepts all addresses)', candidates };
+    return {
+      email: best,
+      confidence: 'guess',
+      method: learnedKey ? `catch-all domain; using${learnedNote}` : 'catch-all domain (accepts all addresses)',
+      candidates,
+      pattern: learnedKey,
+    };
   }
 
-  // Verify the real candidates over one session.
+  // Verify the real candidates over one session (learned address is tried first).
   const codes = await smtpProbe(host, candidates.slice(0, 6), { port: input.port });
   for (const email of candidates) {
     if (classify(codes[email]) === 'valid') {
-      return { email, confidence: 'verified', method: 'SMTP RCPT verified (mailbox exists)', candidates };
+      return { email, confidence: 'verified', method: 'SMTP RCPT verified (mailbox exists)', candidates, pattern: learnedKey };
     }
   }
-  return { email: best, confidence: 'unverified', method: 'best-pattern guess (could not verify)', candidates };
+  return {
+    email: best,
+    confidence: unverifiedConf,
+    method: learnedKey ? `${learnedNote.trim()}; unconfirmed by SMTP` : 'best-pattern guess (could not verify)',
+    candidates,
+    pattern: learnedKey,
+  };
 }

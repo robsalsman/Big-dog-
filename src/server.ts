@@ -302,7 +302,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const name = (req.body?.name as string) ?? '';
     if (!domain.trim() || !name.trim()) return res.status(400).json({ error: 'need name and domain' });
     try {
-      res.json(await findContactEmail({ name, domain }));
+      res.json(await findContactEmail({ name, domain }, brain));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }

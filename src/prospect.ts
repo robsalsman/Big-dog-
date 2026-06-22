@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { deals, memories } from './db.js';
 import { findEmail, type EmailResult } from './emailfinder.js';
+import { learnDomainPattern } from './patternlearner.js';
 import type { AppConfig } from './config.js';
 import type { BigDogBrain } from './brain.js';
 import type { Prospect, Deal } from './types.js';
@@ -14,13 +15,15 @@ function domainFromUrl(url?: string): string | undefined {
   }
 }
 
-/** Find (and SMTP-verify where possible) a contact's email from name + domain. */
-export async function findContactEmail(input: {
-  name?: string;
-  firstName?: string;
-  lastName?: string;
-  domain: string;
-}): Promise<EmailResult> {
+/**
+ * Find a contact's email from name + domain. First learns the company's email
+ * format (web anchor or site scrape, cached), then SMTP-verifies where possible.
+ * The learned pattern means even un-verifiable domains get a confident address.
+ */
+export async function findContactEmail(
+  input: { name?: string; firstName?: string; lastName?: string; domain: string },
+  brain?: BigDogBrain,
+): Promise<EmailResult & { learnedSource?: string }> {
   let first = input.firstName ?? '';
   let last = input.lastName ?? '';
   if (!first && input.name) {
@@ -29,7 +32,9 @@ export async function findContactEmail(input: {
     last = parts.slice(1).join(' ');
   }
   const domain = domainFromUrl(input.domain) ?? input.domain;
-  return findEmail({ firstName: first, lastName: last, domain });
+  const learned = await learnDomainPattern(domain, brain).catch(() => null);
+  const result = await findEmail({ firstName: first, lastName: last, domain, learnedKey: learned?.patternKey });
+  return { ...result, learnedSource: learned?.source };
 }
 
 /**

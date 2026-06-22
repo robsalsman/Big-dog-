@@ -63,6 +63,11 @@ Beyond triage and drafting, Big Dog is a real agent:
   a **verified** address — with catch-all detection and honest confidence labels.
   ("Find email" on any sourced lead, `/email <name> at <domain>` from a bot, or the
   `find_email` operator tool.)
+- **Email-pattern learner** — closes most of the gap with paid tools: Big Dog finds
+  one known email at a company (web anchor, or by scraping the site), deduces that
+  company's exact format (`first.last`, `flast`, …), caches it per domain, and applies
+  it — so even domains it can't SMTP-verify get a confident, correctly-formatted
+  address instead of a blind guess.
 
 ---
 
@@ -135,8 +140,15 @@ database, so Big Dog does it for free:
    whether the mailbox exists. **No email is ever sent.** A random-address probe
    detects **catch-all** domains (which accept everything and can't be verified).
 
-Confidence is honest: `verified` (server confirmed), `guess` (catch-all domain), or
-`unverified` (best-pattern fallback).
+Confidence is honest: `verified` (server confirmed), `guess` (catch-all domain *or*
+a learned company pattern), or `unverified` (best-pattern fallback).
+
+**Pattern learning** (`patternlearner.ts`) makes the guesses far better. Before
+guessing, Big Dog tries to learn the company's actual format from one *known* email:
+a real name+email pair found on the web (exact pattern), or a personal address
+scraped from the site's contact/team pages (structural pattern). It caches the result
+per domain and applies it first — so a domain you can't verify still yields the
+right-shaped address (`jane.smith@…` not a blind `j.smith@…`).
 
 > **The catch:** SMTP verification needs outbound **port 25**, which many ISPs and
 > cloud hosts block, and Gmail/Microsoft 365 deliberately defeat probing. When it
@@ -238,6 +250,7 @@ src/
   cadence.ts        Follow-up engine — nudges for stalled/overdue deals
   prospect.ts       Lead gen — pluggable backends (web research · Apollo.io)
   emailfinder.ts    Free email finder + SMTP verifier (Hunter-style engine)
+  patternlearner.ts Learns a company's email format (web anchor / site scrape)
   digest.ts         Morning brief
   calendar.ts       Unified calendar + .ics export
   calcom.ts         Cal.com booking sync (cloud or self-hosted)

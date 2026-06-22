@@ -96,6 +96,14 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_memories_contact ON memories(contactEmail);
 
+  CREATE TABLE IF NOT EXISTS patterns (
+    domain TEXT PRIMARY KEY,
+    patternKey TEXT,
+    sample TEXT,
+    source TEXT,
+    updatedAt TEXT
+  );
+
   CREATE INDEX IF NOT EXISTS idx_messages_date ON messages(date DESC);
   CREATE INDEX IF NOT EXISTS idx_messages_deal ON messages(dealId);
   CREATE INDEX IF NOT EXISTS idx_events_start ON events(start);
@@ -282,6 +290,27 @@ export const memories = {
   },
   count(): number {
     return (db.prepare('SELECT COUNT(*) c FROM memories').get() as { c: number }).c;
+  },
+};
+
+// ── Learned email patterns (per company domain) ─────────────────────────
+export interface DomainPattern {
+  domain: string;
+  patternKey: string;
+  sample: string;
+  source: string;
+  updatedAt: string;
+}
+
+export const patterns = {
+  get(domain: string): DomainPattern | undefined {
+    return db.prepare('SELECT * FROM patterns WHERE domain = ?').get(domain.toLowerCase()) as DomainPattern | undefined;
+  },
+  set(domain: string, patternKey: string, sample: string, source: string) {
+    db.prepare(
+      `INSERT INTO patterns (domain, patternKey, sample, source, updatedAt) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(domain) DO UPDATE SET patternKey=excluded.patternKey, sample=excluded.sample, source=excluded.source, updatedAt=excluded.updatedAt`,
+    ).run(domain.toLowerCase(), patternKey, sample, source, new Date().toISOString());
   },
 };
 
