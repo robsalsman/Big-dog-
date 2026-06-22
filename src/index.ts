@@ -19,7 +19,7 @@ async function main() {
     ollamaModel: cfg.ollamaModel,
   });
   if (provider.ping) await provider.ping();
-  const brain = new BigDogBrain(provider, cfg.owner);
+  const brain = new BigDogBrain(provider, cfg.owner, cfg.calcom?.bookingUrl);
 
   // Make sure there's something to look at on first run.
   seedDemoData();
@@ -36,6 +36,7 @@ async function main() {
       `      Brain:      ${brain.live ? `live (${brain.backend})` : `offline (${brain.backend}) — set BIGDOG_PROVIDER`}`,
     );
     console.log(`      Mailboxes:  ${accountsCfg.accounts.length || 'none yet — see config/accounts.example.json'}`);
+    console.log(`      Calendar:   ${cfg.calcom ? `Cal.com (${cfg.calcom.baseUrl})` : 'built-in only (add CALCOM_API_KEY for Cal.com)'}`);
     console.log(`      Bots:       ${notifiers.length ? `${notifiers.length} connected` : 'none (add Telegram/Slack tokens to .env)'}`);
     console.log(`      Send mode:  ${cfg.sendMode}`);
     console.log('');

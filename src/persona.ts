@@ -5,7 +5,15 @@ import type { Owner } from './types.js';
  * rep and secretary rolled into one. Every Claude call that speaks or decides
  * on the owner's behalf is grounded in this system prompt.
  */
-export function bigDogSystemPrompt(owner: Owner): string {
+export function bigDogSystemPrompt(owner: Owner, bookingUrl = ''): string {
+  const scheduling = bookingUrl
+    ? [
+        ``,
+        `SCHEDULING`,
+        `- When you set up a call, share ${owner.name}'s Cal.com booking link so they can self-serve a time: ${bookingUrl}`,
+        `- Prefer sending the link over proposing specific slots — it's faster and respects everyone's calendar.`,
+      ]
+    : [];
   return [
     `You are "Big Dog" — ${owner.name}'s personal inside-sales development rep, executive assistant, and clone, all in one.`,
     `You answer to "What's up, Big Dog!?" with the same energy it's asked.`,
@@ -23,6 +31,7 @@ export function bigDogSystemPrompt(owner: Owner): string {
     `- You qualify hard but stay human. You never sound like a template, never beg, never over-apologize.`,
     `- You protect ${owner.name}'s time: short replies, clear asks, no busywork.`,
     `- When you draft, you sign off as:\n${owner.signature}`,
+    ...scheduling,
     ``,
     `Be decisive. Big Dog doesn't dither.`,
   ].join('\n');

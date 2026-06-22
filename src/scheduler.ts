@@ -1,6 +1,7 @@
 import { syncAll } from './mail/ingest.js';
 import { triageNewMail } from './pipeline.js';
 import { generateDigest } from './digest.js';
+import { calcomConfigured, syncCalcomBookings } from './calcom.js';
 import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
 import type { AccountsConfig } from './types.js';
@@ -17,19 +18,26 @@ export function startScheduler(
   brain: BigDogBrain,
   notifiers: Notifier[] = [],
 ): void {
-  // Periodic mail sync + triage.
-  if (cfg.syncMinutes > 0 && accountsCfg.accounts.length > 0) {
+  // Periodic mail sync + triage + Cal.com booking pull.
+  const hasMail = accountsCfg.accounts.length > 0;
+  if (cfg.syncMinutes > 0 && (hasMail || calcomConfigured(cfg))) {
     const everyMs = cfg.syncMinutes * 60_000;
     setInterval(async () => {
       try {
-        await syncAll(accountsCfg.accounts);
-        const n = await triageNewMail(brain);
-        if (n > 0) console.log(`[big-dog] triaged ${n} new message(s)`);
+        if (hasMail) {
+          await syncAll(accountsCfg.accounts);
+          const n = await triageNewMail(brain);
+          if (n > 0) console.log(`[big-dog] triaged ${n} new message(s)`);
+        }
+        if (calcomConfigured(cfg)) {
+          const b = await syncCalcomBookings(cfg);
+          if (b > 0) console.log(`[big-dog] pulled ${b} Cal.com booking(s)`);
+        }
       } catch (err) {
         console.error('[big-dog] sync error:', (err as Error).message);
       }
     }, everyMs).unref();
-    console.log(`[big-dog] auto-sync every ${cfg.syncMinutes} min across ${accountsCfg.accounts.length} mailbox(es)`);
+    console.log(`[big-dog] auto-sync every ${cfg.syncMinutes} min`);
   }
 
   // Daily digest at the configured hour, pushed to chat bots.

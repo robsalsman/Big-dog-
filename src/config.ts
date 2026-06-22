@@ -24,6 +24,8 @@ export interface AppConfig {
   // Chat bots
   telegram: { token: string; chatId: string } | undefined;
   slack: { botToken: string; appToken: string; channel: string; webhookUrl: string } | undefined;
+  // Cal.com scheduling (cloud or self-hosted open-source instance)
+  calcom: { apiKey: string; baseUrl: string; bookingUrl: string } | undefined;
 }
 
 const DEFAULT_OWNER: Owner = {
@@ -55,6 +57,7 @@ export function loadConfig(): AppConfig {
   const provider: AppConfig['provider'] =
     providerRaw === 'anthropic' || providerRaw === 'ollama' ? providerRaw : 'auto';
 
+  const calcomKey = process.env.CALCOM_API_KEY?.trim();
   const tgToken = process.env.TELEGRAM_BOT_TOKEN?.trim();
   const slackBot = process.env.SLACK_BOT_TOKEN?.trim();
   const slackApp = process.env.SLACK_APP_TOKEN?.trim();
@@ -72,6 +75,13 @@ export function loadConfig(): AppConfig {
     provider,
     ollamaHost: process.env.OLLAMA_HOST || 'http://localhost:11434',
     ollamaModel: process.env.OLLAMA_MODEL || 'llama3.1',
+    calcom: calcomKey
+      ? {
+          apiKey: calcomKey,
+          baseUrl: process.env.CALCOM_BASE_URL?.trim() || 'https://api.cal.com/v1',
+          bookingUrl: process.env.CALCOM_BOOKING_URL?.trim() || '',
+        }
+      : undefined,
     telegram: tgToken ? { token: tgToken, chatId: process.env.TELEGRAM_CHAT_ID?.trim() || '' } : undefined,
     slack:
       (slackBot && slackApp) || slackWebhook

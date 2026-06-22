@@ -15,10 +15,10 @@ export class BigDogBrain {
   private owner: Owner;
   private system: string;
 
-  constructor(provider: LLMProvider, owner: Owner) {
+  constructor(provider: LLMProvider, owner: Owner, bookingUrl = '') {
     this.provider = provider;
     this.owner = owner;
-    this.system = bigDogSystemPrompt(owner);
+    this.system = bigDogSystemPrompt(owner, bookingUrl);
   }
 
   get live(): boolean {

@@ -8,6 +8,7 @@ import { sendMail } from './mail/send.js';
 import { triageNewMail } from './pipeline.js';
 import { generateDigest } from './digest.js';
 import { exportIcs } from './calendar.js';
+import { calcomConfigured, syncCalcomBookings } from './calcom.js';
 import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
 import type { AccountsConfig, DealStage, Draft } from './types.js';
@@ -32,6 +33,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       sendMode: cfg.sendMode,
       accounts: accountsCfg.accounts.map((a) => ({ id: a.id, label: a.label, email: a.email })),
       stages: DEAL_STAGES,
+      calcom: { configured: calcomConfigured(cfg), bookingUrl: cfg.calcom?.bookingUrl ?? '' },
       messages: messages.recent(100),
       deals: deals.all(),
       events: events.all(),
@@ -45,7 +47,18 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     try {
       const synced = await syncAll(accountsCfg.accounts);
       const triaged = await triageNewMail(brain);
-      res.json({ synced, triaged });
+      const bookings = calcomConfigured(cfg) ? await syncCalcomBookings(cfg).catch(() => 0) : 0;
+      res.json({ synced, triaged, bookings });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/calcom/sync', async (_req, res) => {
+    if (!calcomConfigured(cfg)) return res.status(400).json({ error: 'Cal.com not configured' });
+    try {
+      const bookings = await syncCalcomBookings(cfg);
+      res.json({ bookings });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }

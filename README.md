@@ -71,6 +71,25 @@ model for free/offline, and switch with one env var. A bigger local model (e.g.
 
 ---
 
+## Calendar via Cal.com (open-source scheduling)
+
+Big Dog plugs into [Cal.com](https://github.com/calcom/cal.com) — cloud or your own
+self-hosted instance — for real scheduling. It pulls your bookings into the one
+unified calendar and shares your booking link automatically when it sets up a call
+on your behalf.
+
+```bash
+# .env:
+CALCOM_API_KEY=cal_xxx                 # Cal.com → Settings → Developer → API Keys
+CALCOM_BASE_URL=https://api.cal.com/v1 # or your self-hosted instance's v1 API
+CALCOM_BOOKING_URL=https://cal.com/rob # your public booking link
+```
+
+Bookings sync on the same interval as mail (and on demand from the Calendar tab).
+Without Cal.com configured, the built-in calendar + `.ics` feed still work.
+
+---
+
 ## Chat with Big Dog (Telegram / Slack)
 
 Talk to your clone from your phone — ask about deals, get the morning brief, trigger
@@ -154,6 +173,7 @@ src/
   pipeline.ts       Triage loop: mail → deals + calendar
   digest.ts         Morning brief
   calendar.ts       Unified calendar + .ics export
+  calcom.ts         Cal.com booking sync (cloud or self-hosted)
   server.ts         REST API + static dashboard
   scheduler.ts      Background sync + daily digest (pushed to bots)
   bots/commands.ts  Shared command router (/brief /sync /deals /today + chat)

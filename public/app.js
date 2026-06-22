@@ -180,12 +180,23 @@ function renderCalendar() {
         )
         .join('')
     : '<div class="empty">Nothing scheduled. Meeting requests land here automatically.</div>';
+  const cal = state.calcom || {};
+  const calBtns = [
+    cal.bookingUrl ? `<a class="btn small primary" href="${esc(cal.bookingUrl)}" target="_blank">📅 Book a call</a>` : '',
+    cal.configured ? `<button class="btn small" onclick="syncCalcom()">↻ Sync Cal.com</button>` : '',
+    `<a class="btn small" href="/calendar.ics">⬇ Subscribe (.ics)</a>`,
+  ].join(' ');
   el.innerHTML = `
     <div class="row" style="margin-bottom:14px">
-      <h2>One calendar</h2>
-      <a class="btn small" href="/calendar.ics">⬇ Subscribe (.ics)</a>
+      <h2>One calendar${cal.configured ? ' <span class="muted small">· Cal.com connected</span>' : ''}</h2>
+      <div>${calBtns}</div>
     </div>${list}`;
 }
+
+window.syncCalcom = async () => {
+  try { const r = await api('/api/calcom/sync', { method: 'POST' }); await load(); switchTab('calendar'); toast(`Pulled ${r.bookings} Cal.com booking(s).`); }
+  catch (e) { toast('Error: ' + e.message); }
+};
 
 // ── Drafts ───────────────────────────────────────────────────────────────
 function renderDrafts() {
