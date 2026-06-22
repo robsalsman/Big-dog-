@@ -137,6 +137,16 @@ export const messages = {
   count(): number {
     return (db.prepare('SELECT COUNT(*) c FROM messages').get() as { c: number }).c;
   },
+  search(q: string, limit = 50): Message[] {
+    const like = `%${q}%`;
+    return db
+      .prepare(
+        `SELECT * FROM messages
+         WHERE subject LIKE ? OR fromName LIKE ? OR fromEmail LIKE ? OR body LIKE ? OR summary LIKE ?
+         ORDER BY date DESC LIMIT ?`,
+      )
+      .all(like, like, like, like, like, limit) as Message[];
+  },
 };
 
 // ── Deals ───────────────────────────────────────────────────────────────
@@ -164,6 +174,16 @@ export const deals = {
   },
   all(): Deal[] {
     return db.prepare('SELECT * FROM deals ORDER BY updatedAt DESC').all() as Deal[];
+  },
+  search(q: string, limit = 30): Deal[] {
+    const like = `%${q}%`;
+    return db
+      .prepare(
+        `SELECT * FROM deals
+         WHERE title LIKE ? OR company LIKE ? OR contactName LIKE ? OR contactEmail LIKE ? OR nextStep LIKE ?
+         ORDER BY updatedAt DESC LIMIT ?`,
+      )
+      .all(like, like, like, like, like, limit) as Deal[];
   },
   setStage(id: string, stage: DealStage) {
     db.prepare('UPDATE deals SET stage = ?, updatedAt = ? WHERE id = ?').run(
@@ -215,6 +235,11 @@ export const drafts = {
     return db
       .prepare("SELECT * FROM drafts WHERE dealId = ? AND createdAt >= ?")
       .all(dealId, sinceIso) as Draft[];
+  },
+  existsForMessage(inReplyTo: string): boolean {
+    return !!db
+      .prepare("SELECT 1 FROM drafts WHERE inReplyTo = ? AND status IN ('pending','sent')")
+      .get(inReplyTo);
   },
   setStatus(id: string, status: Draft['status'], sentAt: string | null = null) {
     db.prepare('UPDATE drafts SET status = ?, sentAt = ? WHERE id = ?').run(status, sentAt, id);

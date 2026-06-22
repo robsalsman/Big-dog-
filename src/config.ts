@@ -14,6 +14,7 @@ export interface AppConfig {
   syncMinutes: number;
   digestHour: number;
   sendMode: 'hold' | 'auto';
+  autoDraft: boolean;
   anthropicKey: string | undefined;
   owner: Owner;
   accountsConfigPath: string;
@@ -71,6 +72,7 @@ export function loadConfig(): AppConfig {
     syncMinutes: Number(process.env.BIGDOG_SYNC_MINUTES ?? 5),
     digestHour: Number(process.env.BIGDOG_DIGEST_HOUR ?? 7),
     sendMode: process.env.BIGDOG_SEND_MODE === 'auto' ? 'auto' : 'hold',
+    autoDraft: process.env.BIGDOG_AUTODRAFT !== 'off',
     anthropicKey: process.env.ANTHROPIC_API_KEY || undefined,
     owner,
     accountsConfigPath,

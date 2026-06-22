@@ -34,6 +34,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       brainLive: brain.live,
       backend: brain.backend,
       sendMode: cfg.sendMode,
+      autoDraft: cfg.autoDraft,
       accounts: accountsCfg.accounts.map((a) => ({ id: a.id, label: a.label, email: a.email })),
       stages: DEAL_STAGES,
       calcom: { configured: calcomConfigured(cfg), bookingUrl: cfg.calcom?.bookingUrl ?? '' },
@@ -49,7 +50,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   app.post('/api/sync', async (_req, res) => {
     try {
       const synced = await syncAll(accountsCfg.accounts);
-      const triaged = await triageNewMail(brain);
+      const triaged = await triageNewMail(brain, cfg, accountsCfg);
       const bookings = calcomConfigured(cfg) ? await syncCalcomBookings(cfg).catch(() => 0) : 0;
       res.json({ synced, triaged, bookings });
     } catch (err) {
@@ -69,7 +70,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
 
   app.post('/api/triage', async (_req, res) => {
     try {
-      const triaged = await triageNewMail(brain);
+      const triaged = await triageNewMail(brain, cfg, accountsCfg);
       res.json({ triaged });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -272,6 +273,13 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
 
   app.get('/api/memory/:email', (req, res) => {
     res.json({ recall: memories.recall(req.params.email) });
+  });
+
+  // ── Search across the inbox + pipeline ──────────────────────────────
+  app.get('/api/search', (req, res) => {
+    const q = String(req.query.q ?? '').trim();
+    if (!q) return res.json({ messages: [], deals: [] });
+    res.json({ messages: messages.search(q), deals: deals.search(q) });
   });
 
   return app;

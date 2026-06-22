@@ -1,14 +1,23 @@
 import { randomUUID } from 'node:crypto';
-import { messages, deals, events, memories } from './db.js';
+import { messages, deals, events, memories, drafts } from './db.js';
 import type { BigDogBrain } from './brain.js';
-import type { Deal, CalendarEvent } from './types.js';
+import type { AppConfig } from './config.js';
+import type { AccountsConfig, Deal, CalendarEvent, Draft } from './types.js';
+
+const NO_REPLY = /no-?reply|do-?not-?reply|notifications?@|mailer-daemon|postmaster|@.*\.(amazonaws|sendgrid|mailchimp)/i;
 
 /**
  * Run Big Dog's triage over any new, un-analyzed mail: classify priority,
- * pull sales opportunities into the pipeline, and drop meeting requests onto
- * the calendar. This is the "works deals for you" loop.
+ * pull sales opportunities into the pipeline, drop meeting requests onto the
+ * calendar, and — when auto-draft is on — have a reply already waiting for any
+ * hot/warm thread. This is the "works deals for you" loop.
  */
-export async function triageNewMail(brain: BigDogBrain, limit = 15): Promise<number> {
+export async function triageNewMail(
+  brain: BigDogBrain,
+  cfg: AppConfig,
+  accounts: AccountsConfig,
+  limit = 15,
+): Promise<number> {
   const pending = messages.unanalyzed(limit);
   let processed = 0;
 
@@ -74,6 +83,37 @@ export async function triageNewMail(brain: BigDogBrain, limit = 15): Promise<num
     }
 
     messages.setAnalysis(m.id, analysis.priority, analysis.summary, dealId);
+
+    // Auto-draft: have a reply waiting for any hot/warm thread worth answering.
+    if (
+      cfg.autoDraft &&
+      (analysis.priority === 'hot' || analysis.priority === 'warm') &&
+      m.fromEmail &&
+      !NO_REPLY.test(m.fromEmail) &&
+      !drafts.existsForMessage(m.messageId)
+    ) {
+      try {
+        const dealForDraft = dealId ? deals.get(dealId) ?? null : null;
+        const { subject, body, rationale } = await brain.draftReply(m, dealForDraft, memory);
+        const draft: Draft = {
+          id: randomUUID().slice(0, 16),
+          accountId: m.accountId || accounts.accounts[0]?.id || 'demo',
+          inReplyTo: m.messageId,
+          dealId,
+          toEmails: m.fromEmail,
+          subject,
+          body,
+          rationale: `Auto-drafted on arrival. ${rationale}`,
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+          sentAt: null,
+        };
+        drafts.insert(draft);
+      } catch {
+        /* auto-draft is best-effort; never block triage */
+      }
+    }
+
     processed++;
   }
 

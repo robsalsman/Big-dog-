@@ -48,6 +48,10 @@ Beyond triage and drafting, Big Dog is a real agent:
 - **Follow-up cadences** — sweeps for stalled or overdue deals daily and drafts
   nudges so nothing goes cold silently. (🐕 *Run follow-ups* on the Pipeline, or
   `/followups`.)
+- **Auto-draft on arrival** — the moment a hot/warm email lands, a reply is already
+  drafted and waiting for your approval (no-reply/notification senders skipped).
+  Toggle with `BIGDOG_AUTODRAFT`. (Inspired by `cloudflare/agentic-inbox`.)
+- **Search** — full-text search across your inbox and pipeline from the Inbox tab.
 
 ---
 
@@ -170,6 +174,7 @@ it every few minutes.
 | `BIGDOG_SYNC_MINUTES` | `5` | Mailbox check interval (`0` disables). |
 | `BIGDOG_DIGEST_HOUR` | `7` | Hour (0–23) the morning brief fires. |
 | `BIGDOG_SEND_MODE` | `hold` | `hold` = approve every reply · `auto` = send confident ones automatically. |
+| `BIGDOG_AUTODRAFT` | `on` | Auto-draft a reply when a hot/warm email arrives (`on`/`off`). |
 | `BIGDOG_CADENCE_STALE_DAYS` | `4` | Days of silence before a deal gets a follow-up nudge. |
 | `BIGDOG_AGENT_MAX_STEPS` | `8` | Max tool steps per operator-mode task. |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | — | Telegram two-way chat + push target. |

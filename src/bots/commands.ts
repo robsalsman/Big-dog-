@@ -96,7 +96,7 @@ export async function routeMessage(rawText: string, deps: BotDeps): Promise<stri
 
   if (cmd === '/sync' || cmd === 'sync') {
     const synced = await syncAll(deps.accounts.accounts);
-    const triaged = await triageNewMail(deps.brain);
+    const triaged = await triageNewMail(deps.brain, deps.cfg, deps.accounts);
     const newMail = synced.reduce((n, s) => n + s.added, 0);
     return `🐕 Synced ${newMail} new message(s) and worked ${triaged}. ${deps.accounts.accounts.length ? '' : '(No mailboxes configured yet.)'}`;
   }

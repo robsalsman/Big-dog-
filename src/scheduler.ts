@@ -27,7 +27,7 @@ export function startScheduler(
       try {
         if (hasMail) {
           await syncAll(accountsCfg.accounts);
-          const n = await triageNewMail(brain);
+          const n = await triageNewMail(brain, cfg, accountsCfg);
           if (n > 0) console.log(`[big-dog] triaged ${n} new message(s)`);
         }
         if (calcomConfigured(cfg)) {

@@ -82,39 +82,79 @@ function renderAll() {
 }
 
 // ── Inbox ────────────────────────────────────────────────────────────────
+function messageCard(m) {
+  const p = m.priority || 'cold';
+  const drafted = state.drafts.some((d) => d.inReplyTo && d.inReplyTo === m.messageId);
+  return `
+    <div class="card ${p}">
+      <div class="row">
+        <div>
+          <strong>${esc(m.fromName)}</strong>
+          <span class="muted small">&lt;${esc(m.fromEmail)}&gt;</span>
+          ${drafted ? '<span class="tag warm" title="Reply auto-drafted">✍ drafted</span>' : ''}
+          <div>${esc(m.subject)}</div>
+          ${m.summary ? `<div class="muted small">🐕 ${esc(m.summary)}</div>` : ''}
+        </div>
+        <div style="text-align:right;white-space:nowrap">
+          <span class="tag ${p}">${p}</span>
+          <div class="muted small">${fmtDate(m.date)}</div>
+        </div>
+      </div>
+      <div class="msg-body" id="body-${m.id}">${esc(m.body)}</div>
+      <div id="intel-${m.id}"></div>
+      <div class="actions">
+        <button class="btn small ghost" onclick="toggleBody('${m.id}')">Read</button>
+        <button class="btn small primary" onclick="draftReply('${m.id}')">🐕 Draft my reply</button>
+        <button class="btn small" onclick="research('${m.id}','${esc(m.fromName)} ${esc(m.fromEmail)}')">🔎 Research</button>
+        <button class="btn small ghost" onclick="remember('${esc(m.fromEmail)}')">📝 Remember</button>
+      </div>
+    </div>`;
+}
+
 function renderInbox() {
   const el = $('#inbox');
-  const msgs = state.messages;
-  if (!msgs.length) { el.innerHTML = '<div class="empty">Inbox empty. Hit “Sync &amp; work the inbox”.</div>'; return; }
-  el.innerHTML = msgs
-    .map((m) => {
-      const p = m.priority || 'cold';
-      return `
-      <div class="card ${p}">
-        <div class="row">
-          <div>
-            <strong>${esc(m.fromName)}</strong>
-            <span class="muted small">&lt;${esc(m.fromEmail)}&gt;</span>
-            <div>${esc(m.subject)}</div>
-            ${m.summary ? `<div class="muted small">🐕 ${esc(m.summary)}</div>` : ''}
-          </div>
-          <div style="text-align:right;white-space:nowrap">
-            <span class="tag ${p}">${p}</span>
-            <div class="muted small">${fmtDate(m.date)}</div>
-          </div>
-        </div>
-        <div class="msg-body" id="body-${m.id}">${esc(m.body)}</div>
-        <div id="intel-${m.id}"></div>
-        <div class="actions">
-          <button class="btn small ghost" onclick="toggleBody('${m.id}')">Read</button>
-          <button class="btn small primary" onclick="draftReply('${m.id}')">🐕 Draft my reply</button>
-          <button class="btn small" onclick="research('${m.id}','${esc(m.fromName)} ${esc(m.fromEmail)}')">🔎 Research</button>
-          <button class="btn small ghost" onclick="remember('${esc(m.fromEmail)}')">📝 Remember</button>
-        </div>
-      </div>`;
-    })
-    .join('');
+  const list = `
+    <div class="chat-input" style="margin-bottom:14px">
+      <input id="inbox-search" placeholder="🔎 Search inbox &amp; pipeline…" value="${esc(inboxQuery)}" />
+      ${inboxQuery ? '<button class="btn ghost" onclick="clearSearch()">Clear</button>' : ''}
+    </div>
+    <div id="inbox-list"></div>`;
+  el.innerHTML = list;
+  $('#inbox-search').addEventListener('input', (e) => {
+    inboxQuery = e.target.value;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(runSearch, 220);
+  });
+  if (inboxQuery.trim()) runSearch();
+  else renderInboxList(state.messages);
 }
+
+function renderInboxList(msgs) {
+  const wrap = $('#inbox-list');
+  if (!wrap) return;
+  if (!msgs.length) {
+    wrap.innerHTML = `<div class="empty">${inboxQuery ? 'No matches.' : 'Inbox empty. Hit “Sync &amp; work the inbox”.'}</div>`;
+    return;
+  }
+  wrap.innerHTML = msgs.map(messageCard).join('');
+}
+
+let inboxQuery = '';
+let searchTimer = null;
+
+async function runSearch() {
+  const q = inboxQuery.trim();
+  if (!q) { renderInboxList(state.messages); return; }
+  try {
+    const r = await api('/api/search?q=' + encodeURIComponent(q));
+    const dealHits = r.deals.length
+      ? `<div class="muted small" style="margin-bottom:8px">💼 ${r.deals.length} matching deal(s): ${r.deals.map((d) => esc(d.title)).join(', ')}</div>`
+      : '';
+    $('#inbox-list').innerHTML = dealHits + (r.messages.length ? r.messages.map(messageCard).join('') : '<div class="empty">No matching messages.</div>');
+  } catch (e) { toast('Search error: ' + e.message); }
+}
+
+window.clearSearch = () => { inboxQuery = ''; renderInbox(); };
 
 window.toggleBody = (id) => {
   $('#body-' + id).classList.toggle('open');
