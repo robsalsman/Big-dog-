@@ -20,6 +20,8 @@ export interface LLMProvider {
   webProspect?(criteria: string): Promise<string>;
   /** Optional — find one known (name, email) at a domain to learn its email format. */
   webFindEmail?(domain: string): Promise<string>;
+  /** Optional — resolve a company name to its primary web/email domain. */
+  webCompanyDomain?(company: string): Promise<string>;
 }
 
 // ── Claude ────────────────────────────────────────────────────────────────
@@ -118,6 +120,28 @@ export class AnthropicProvider implements LLMProvider {
         },
       ],
       tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }],
+    } as Anthropic.MessageCreateParamsNonStreaming);
+
+    return res.content
+      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      .map((b) => b.text)
+      .join('')
+      .trim();
+  }
+
+  async webCompanyDomain(company: string): Promise<string> {
+    const res = await this.client.messages.create({
+      model: this.model,
+      max_tokens: 400,
+      messages: [
+        {
+          role: 'user',
+          content:
+            `What is the primary website/email domain for the company "${company}"? ` +
+            `Return ONLY JSON: {"domain": "example.com"} — or {} if you're not sure. Just the bare domain, no https/www.`,
+        },
+      ],
+      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }],
     } as Anthropic.MessageCreateParamsNonStreaming);
 
     return res.content

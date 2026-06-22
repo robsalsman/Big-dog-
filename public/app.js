@@ -410,9 +410,68 @@ function renderProspect() {
       <input id="prospect-q" placeholder="e.g. Heads of RevOps at Series B SaaS in the US" />
       <button class="btn primary" onclick="findLeads()">🐕 Find leads</button>
     </div>
-    <div id="prospect-out" style="margin-top:14px"></div>`;
+    <div id="prospect-out" style="margin-top:14px"></div>
+
+    <div class="card" style="margin-top:22px">
+      <strong>📥 Import a lead list (CSV)</strong>
+      <div class="muted small" style="margin:4px 0 10px">
+        Paste or upload a CSV with a header row. Recognized columns: <code>name</code> (or <code>first</code>/<code>last</code>),
+        <code>company</code>, <code>domain</code> or <code>website</code>, <code>title</code>, <code>email</code>.
+        Big Dog learns each company's email format and fills the missing emails. No domain? It resolves it from the company name (Claude backend).
+      </div>
+      <input type="file" id="csv-file" accept=".csv,text/csv" class="subj" />
+      <textarea class="edit" id="csv-text" placeholder="name,company,domain&#10;Jane Smith,Acme,acme.com&#10;Bob Lee,Globex,globex.com"></textarea>
+      <div class="actions">
+        <label class="small muted"><input type="checkbox" id="csv-verify" /> SMTP-verify each (slower)</label>
+        <button class="btn small primary" onclick="enrichCsv(false)">Enrich</button>
+        <button class="btn small good" onclick="enrichCsv(true)">Enrich + add all to pipeline</button>
+      </div>
+      <div id="csv-out" style="margin-top:12px"></div>
+    </div>`;
   $('#prospect-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') findLeads(); });
+  $('#csv-file').addEventListener('change', (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const r = new FileReader(); r.onload = () => { $('#csv-text').value = r.result; }; r.readAsText(f);
+  });
 }
+
+window.enrichCsv = async (save) => {
+  const csv = $('#csv-text').value.trim();
+  if (!csv) { toast('Paste or upload a CSV first.'); return; }
+  const verify = $('#csv-verify').checked;
+  const out = $('#csv-out');
+  out.innerHTML = `<div class="muted">🐕 Enriching${verify ? ' + verifying' : ''}… ${verify ? '(SMTP checks take a few seconds each)' : ''}</div>`;
+  try {
+    const r = await api('/api/prospect/enrich', { method: 'POST', body: { csv, verify, save } });
+    const rows = r.rows.map((x) => {
+      const tag = x.confidence === 'verified' ? 'warm' : x.confidence === 'skipped' ? 'cold' : 'warm';
+      return `<tr>
+        <td>${esc(x.name)}</td><td class="muted small">${esc(x.company)}</td>
+        <td>${x.email ? esc(x.email) : '<span class="muted">—</span>'}</td>
+        <td><span class="tag ${tag}">${esc(x.confidence || '—')}</span></td>
+        <td class="muted small">${esc(x.method)}</td></tr>`;
+    }).join('');
+    const filled = r.rows.filter((x) => x.email && x.confidence !== 'skipped').length;
+    out.innerHTML = `
+      <div class="small" style="margin-bottom:8px">Enriched <strong>${filled}/${r.count}</strong> rows${save ? ' · added to pipeline' : ''}.
+        <button class="btn small" onclick="downloadCsv()">⬇ Download CSV</button></div>
+      <div style="overflow:auto"><table style="width:100%;border-collapse:collapse" class="small">
+        <tr class="muted"><th align="left">Name</th><th align="left">Company</th><th align="left">Email</th><th align="left">Conf.</th><th align="left">How</th></tr>
+        ${rows}</table></div>`;
+    window.__enriched = r.rows;
+    if (save) await load();
+  } catch (e) { out.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+};
+
+window.downloadCsv = () => {
+  const rows = window.__enriched || [];
+  const header = 'name,title,company,domain,email,confidence,method';
+  const esc2 = (s) => `"${String(s || '').replace(/"/g, '""')}"`;
+  const body = rows.map((r) => [r.name, r.title, r.company, r.domain, r.email, r.confidence, r.method].map(esc2).join(',')).join('\n');
+  const blob = new Blob([header + '\n' + body], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'big-dog-enriched.csv'; a.click();
+};
 
 window.findLeads = async () => {
   const q = $('#prospect-q').value.trim();

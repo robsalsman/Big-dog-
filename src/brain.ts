@@ -73,6 +73,18 @@ export class BigDogBrain {
     }
   }
 
+  /** Resolve a company name to its email domain (web-backed; '' if unavailable). */
+  async companyDomain(company: string): Promise<string> {
+    if (!this.provider.webCompanyDomain) return '';
+    try {
+      const out = await this.provider.webCompanyDomain(company);
+      const o = JSON.parse(extractJson(out)) as { domain?: string };
+      return (o.domain ?? '').toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
+    } catch {
+      return '';
+    }
+  }
+
   /** Live web research on a lead (only when the backend supports it). */
   async research(query: string): Promise<string> {
     if (this.provider.webResearch) {

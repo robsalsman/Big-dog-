@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { messages, deals, events, drafts, memories } from './db.js';
 import { runAgent } from './agent/agent.js';
 import { runCadenceSweep } from './cadence.js';
-import { findProspects, saveProspectAsDeal, activeProvider, findContactEmail } from './prospect.js';
+import { findProspects, saveProspectAsDeal, activeProvider, findContactEmail, parseCsv, enrichRows } from './prospect.js';
 import { loadSettings, saveSettings, buildProvider, publicSettings, testProvider } from './settings.js';
 import type { Prospect } from './types.js';
 import { syncAll } from './mail/ingest.js';
@@ -295,6 +295,26 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const p = req.body?.prospect as Prospect | undefined;
     if (!p || !p.name) return res.status(400).json({ error: 'no prospect' });
     res.json({ deal: saveProspectAsDeal(p) });
+  });
+
+  // Bulk: import a CSV lead list and fill in each contact's email.
+  app.post('/api/prospect/enrich', async (req, res) => {
+    const rows = req.body?.csv ? parseCsv(String(req.body.csv)) : (req.body?.rows as Record<string, string>[]) ?? [];
+    if (!rows.length) return res.status(400).json({ error: 'no rows — paste a CSV with a header row (name/company/domain/…)' });
+    try {
+      const verify = !!req.body?.verify;
+      const enriched = await enrichRows(rows, brain, { verify });
+      if (req.body?.save) {
+        for (const r of enriched) {
+          if (r.email && r.confidence !== 'skipped') {
+            saveProspectAsDeal({ name: r.name, title: r.title, company: r.company, domain: r.domain, email: r.email, linkedin: '', location: '', source: 'csv', notes: `${r.confidence} (${r.method})` });
+          }
+        }
+      }
+      res.json({ count: enriched.length, rows: enriched });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   // Find + verify a contact's email from name + domain (Hunter-style engine).

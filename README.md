@@ -69,6 +69,11 @@ Beyond triage and drafting, Big Dog is a real agent:
   company's exact format (`first.last`, `flast`, …), caches it per domain, and applies
   it — so even domains it can't SMTP-verify get a confident, correctly-formatted
   address instead of a blind guess.
+- **CSV lead-list enrichment** — paste or upload a CSV of names + companies and Big
+  Dog fills in each contact's email in bulk (learning each company's pattern, caching
+  per domain, resolving company → domain via the web when needed), then exports the
+  enriched CSV or adds everyone to the pipeline. Optional per-list SMTP verification.
+  (Prospect tab → Import a lead list.)
 
 ---
 

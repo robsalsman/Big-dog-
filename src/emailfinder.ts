@@ -171,6 +171,22 @@ function classify(code: number | undefined): 'valid' | 'invalid' | 'unknown' {
   return 'unknown';
 }
 
+/** Build an address from patterns WITHOUT any SMTP probe — for fast bulk enrichment. */
+export function guessEmail(firstName: string, lastName: string, domain: string, learnedKey?: string): EmailResult {
+  const locals = candidateLocals(firstName, lastName);
+  const learnedLocal = learnedKey ? renderLocal(learnedKey, firstName, lastName) : '';
+  const ordered = learnedLocal ? [learnedLocal, ...locals.filter((l) => l !== learnedLocal)] : locals;
+  const candidates = ordered.map((l) => `${l}@${domain}`);
+  const best = (learnedLocal ? `${learnedLocal}@${domain}` : candidates[0]) ?? `${clean(firstName)}@${domain}`;
+  return {
+    email: best,
+    confidence: learnedKey ? 'guess' : 'unverified',
+    method: learnedKey ? `learned company pattern (${learnedKey})` : 'best-pattern guess (not verified)',
+    candidates,
+    pattern: learnedKey,
+  };
+}
+
 export interface FindEmailInput {
   firstName: string;
   lastName: string;

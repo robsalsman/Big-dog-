@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { deals, memories } from './db.js';
-import { findEmail, type EmailResult } from './emailfinder.js';
+import { findEmail, guessEmail, type EmailResult } from './emailfinder.js';
 import { learnDomainPattern } from './patternlearner.js';
 import type { AppConfig } from './config.js';
 import type { BigDogBrain } from './brain.js';
@@ -23,6 +23,7 @@ function domainFromUrl(url?: string): string | undefined {
 export async function findContactEmail(
   input: { name?: string; firstName?: string; lastName?: string; domain: string },
   brain?: BigDogBrain,
+  opts: { verify?: boolean } = {},
 ): Promise<EmailResult & { learnedSource?: string }> {
   let first = input.firstName ?? '';
   let last = input.lastName ?? '';
@@ -33,8 +34,118 @@ export async function findContactEmail(
   }
   const domain = domainFromUrl(input.domain) ?? input.domain;
   const learned = await learnDomainPattern(domain, brain).catch(() => null);
-  const result = await findEmail({ firstName: first, lastName: last, domain, learnedKey: learned?.patternKey });
+  // verify=false (default for bulk) skips the slow SMTP probe — pattern only.
+  const result =
+    opts.verify === false
+      ? guessEmail(first, last, domain, learned?.patternKey)
+      : await findEmail({ firstName: first, lastName: last, domain, learnedKey: learned?.patternKey });
   return { ...result, learnedSource: learned?.source };
+}
+
+// ── CSV lead-list import + bulk enrichment ──────────────────────────────
+const HEADER_MAP: Record<string, string> = {
+  name: 'name', 'full name': 'name', contact: 'name', 'contact name': 'name',
+  first: 'first', firstname: 'first', 'first name': 'first', 'given name': 'first',
+  last: 'last', lastname: 'last', 'last name': 'last', surname: 'last', 'family name': 'last',
+  company: 'company', organization: 'company', organisation: 'company', account: 'company', employer: 'company',
+  domain: 'domain', 'email domain': 'domain',
+  website: 'website', url: 'website', site: 'website', web: 'website', 'company website': 'website',
+  title: 'title', 'job title': 'title', role: 'title', position: 'title',
+  email: 'email', 'email address': 'email', 'work email': 'email',
+  linkedin: 'linkedin', 'linkedin url': 'linkedin',
+};
+
+/** Minimal RFC-ish CSV parser (handles quotes, commas, escaped quotes). */
+export function parseCsv(text: string): Record<string, string>[] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let inQuotes = false;
+  const t = text.replace(/\r\n?/g, '\n');
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (t[i + 1] === '"') { field += '"'; i++; } else inQuotes = false;
+      } else field += c;
+    } else if (c === '"') inQuotes = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else field += c;
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  const nonEmpty = rows.filter((r) => r.some((v) => v.trim() !== ''));
+  if (nonEmpty.length < 2) return [];
+
+  const headers = nonEmpty[0]!.map((h) => HEADER_MAP[h.trim().toLowerCase()] ?? h.trim().toLowerCase());
+  return nonEmpty.slice(1).map((r) => {
+    const obj: Record<string, string> = {};
+    headers.forEach((h, i) => (obj[h] = (r[i] ?? '').trim()));
+    return obj;
+  });
+}
+
+export interface EnrichedRow {
+  name: string;
+  title: string;
+  company: string;
+  domain: string;
+  email: string;
+  confidence: string;
+  method: string;
+}
+
+async function resolveDomain(row: Record<string, string>, brain?: BigDogBrain, cache?: Map<string, string>): Promise<string> {
+  if (row.domain) return domainFromUrl(row.domain) ?? row.domain;
+  if (row.website) return domainFromUrl(row.website) ?? '';
+  if (row.email && row.email.includes('@')) return row.email.split('@')[1] ?? '';
+  if (row.company && brain?.live) {
+    const key = row.company.toLowerCase();
+    if (cache?.has(key)) return cache.get(key)!;
+    const d = await brain.companyDomain(row.company).catch(() => '');
+    cache?.set(key, d);
+    return d;
+  }
+  return '';
+}
+
+/** Enrich a parsed lead list: fill in each contact's email (learned-pattern by default). */
+export async function enrichRows(
+  rows: Record<string, string>[],
+  brain: BigDogBrain | undefined,
+  opts: { verify?: boolean; limit?: number } = {},
+): Promise<EnrichedRow[]> {
+  const limit = Math.min(opts.limit ?? (opts.verify ? 20 : 100), 200);
+  const domainCache = new Map<string, string>();
+  const out: EnrichedRow[] = [];
+
+  for (const row of rows.slice(0, limit)) {
+    const name = row.name || [row.first, row.last].filter(Boolean).join(' ');
+    const company = row.company || '';
+    const base: EnrichedRow = { name, title: row.title || '', company, domain: '', email: row.email || '', confidence: '', method: '' };
+
+    if (row.email && row.email.includes('@')) {
+      base.domain = row.email.split('@')[1] ?? '';
+      base.confidence = 'provided';
+      base.method = 'email already in list';
+      out.push(base);
+      continue;
+    }
+    const domain = await resolveDomain(row, brain, domainCache);
+    base.domain = domain;
+    if (!name || !domain) {
+      base.confidence = 'skipped';
+      base.method = !domain ? 'no domain (add a domain/website column, or use Claude to resolve)' : 'no contact name';
+      out.push(base);
+      continue;
+    }
+    const r = await findContactEmail({ name, domain }, brain, { verify: opts.verify });
+    base.email = r.email;
+    base.confidence = r.confidence;
+    base.method = r.method;
+    out.push(base);
+  }
+  return out;
 }
 
 /**
