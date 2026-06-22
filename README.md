@@ -31,6 +31,24 @@ dashboard, **Telegram, or Slack**.
 It ships with **demo data**, so the dashboard is alive the moment you start it —
 before you wire up a single real mailbox.
 
+### Big Dog does big things
+
+Beyond triage and drafting, Big Dog is a real agent:
+
+- **Operator mode** — tell it a goal ("follow up with everyone stuck in proposal
+  stage") and it runs an autonomous tool loop: look up deals, draft replies, update
+  stages, schedule calls, remember facts — taking real action and queuing anything
+  that needs your sign-off. (Dashboard → *Ask Big Dog* → Operator, or `/do` from a bot.)
+- **Relationship memory** — it remembers each contact across months (objections,
+  preferences, history) and threads that into every reply. (📝 *Remember* on any
+  message, or the `remember` tool.)
+- **Lead research** — pulls a web brief on a prospect (company, funding, role, news)
+  before you reply. (🔎 *Research* on any message, or `/research`. Uses the Claude
+  backend's web access.)
+- **Follow-up cadences** — sweeps for stalled or overdue deals daily and drafts
+  nudges so nothing goes cold silently. (🐕 *Run follow-ups* on the Pipeline, or
+  `/followups`.)
+
 ---
 
 ## Quick start
@@ -93,8 +111,8 @@ Without Cal.com configured, the built-in calendar + `.ics` feed still work.
 ## Chat with Big Dog (Telegram / Slack)
 
 Talk to your clone from your phone — ask about deals, get the morning brief, trigger
-a sync — using the same commands everywhere: `/brief`, `/sync`, `/deals`, `/today`,
-`/help`, or just chat.
+a sync — using the same commands everywhere: `/do <goal>`, `/research <who>`,
+`/followups`, `/brief`, `/sync`, `/deals`, `/today`, `/help`, or just chat.
 
 **Telegram** (easiest — no public URL needed):
 
@@ -152,6 +170,8 @@ it every few minutes.
 | `BIGDOG_SYNC_MINUTES` | `5` | Mailbox check interval (`0` disables). |
 | `BIGDOG_DIGEST_HOUR` | `7` | Hour (0–23) the morning brief fires. |
 | `BIGDOG_SEND_MODE` | `hold` | `hold` = approve every reply · `auto` = send confident ones automatically. |
+| `BIGDOG_CADENCE_STALE_DAYS` | `4` | Days of silence before a deal gets a follow-up nudge. |
+| `BIGDOG_AGENT_MAX_STEPS` | `8` | Max tool steps per operator-mode task. |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | — | Telegram two-way chat + push target. |
 | `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` / `SLACK_CHANNEL` | — | Slack two-way chat (Socket Mode) + push channel. |
 | `SLACK_WEBHOOK_URL` | — | Slack one-way notifications (alternative to tokens). |
@@ -171,6 +191,9 @@ src/
   mail/ingest.ts    IMAP → normalized messages
   mail/send.ts      SMTP send
   pipeline.ts       Triage loop: mail → deals + calendar
+  agent/agent.ts    Operator mode — autonomous ReAct tool loop (any backend)
+  agent/tools.ts    The tools Big Dog can act with (deals, drafts, calendar, memory…)
+  cadence.ts        Follow-up engine — nudges for stalled/overdue deals
   digest.ts         Morning brief
   calendar.ts       Unified calendar + .ics export
   calcom.ts         Cal.com booking sync (cloud or self-hosted)

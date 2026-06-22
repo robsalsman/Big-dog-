@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { messages, deals, events } from './db.js';
+import { messages, deals, events, memories } from './db.js';
 import type { BigDogBrain } from './brain.js';
 import type { Deal, CalendarEvent } from './types.js';
 
@@ -14,7 +14,8 @@ export async function triageNewMail(brain: BigDogBrain, limit = 15): Promise<num
 
   for (const m of pending) {
     const existingDeal = m.fromEmail ? deals.findByContact(m.fromEmail) ?? null : null;
-    const analysis = await brain.analyze(m, existingDeal);
+    const memory = m.fromEmail ? memories.recall(m.fromEmail) : '';
+    const analysis = await brain.analyze(m, existingDeal, memory);
 
     let dealId: string | null = existingDeal?.id ?? null;
     const nowIso = new Date().toISOString();

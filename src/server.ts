@@ -2,7 +2,9 @@ import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { messages, deals, events, drafts } from './db.js';
+import { messages, deals, events, drafts, memories } from './db.js';
+import { runAgent } from './agent/agent.js';
+import { runCadenceSweep } from './cadence.js';
 import { syncAll } from './mail/ingest.js';
 import { sendMail } from './mail/send.js';
 import { triageNewMail } from './pipeline.js';
@@ -23,6 +25,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   app.use(express.static(PUBLIC_DIR));
 
   const accountById = (id: string) => accountsCfg.accounts.find((a) => a.id === id);
+  const agentCtx = { cfg, accounts: accountsCfg, brain };
 
   // ── Whole-world snapshot for the dashboard ──────────────────────────
   app.get('/api/state', (_req, res) => {
@@ -78,8 +81,9 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const m = messages.get(req.params.id);
     if (!m) return res.status(404).json({ error: 'message not found' });
     const deal = m.dealId ? deals.get(m.dealId) ?? null : null;
+    const memory = m.fromEmail ? memories.recall(m.fromEmail) : '';
     try {
-      const { subject, body, rationale } = await brain.draftReply(m, deal);
+      const { subject, body, rationale } = await brain.draftReply(m, deal, memory);
       const draft: Draft = {
         id: randomUUID().slice(0, 16),
         accountId: m.accountId,
@@ -222,6 +226,52 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // ── Operator mode: tell Big Dog to DO something ─────────────────────
+  app.post('/api/agent', async (req, res) => {
+    const goal = (req.body?.goal as string) ?? '';
+    if (!goal.trim()) return res.status(400).json({ error: 'empty goal' });
+    try {
+      const run = await runAgent(goal, agentCtx);
+      res.json(run);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Lead research (web) ─────────────────────────────────────────────
+  app.post('/api/research', async (req, res) => {
+    const query = (req.body?.query as string) ?? '';
+    if (!query.trim()) return res.status(400).json({ error: 'empty query' });
+    try {
+      res.json({ brief: await brain.research(query) });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Follow-up cadence sweep ─────────────────────────────────────────
+  app.post('/api/cadence/run', async (_req, res) => {
+    try {
+      const created = await runCadenceSweep(agentCtx);
+      res.json({ created });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Relationship memory ─────────────────────────────────────────────
+  app.post('/api/memory', (req, res) => {
+    const email = (req.body?.email as string) ?? '';
+    const note = (req.body?.note as string) ?? '';
+    if (!email.trim() || !note.trim()) return res.status(400).json({ error: 'need email and note' });
+    memories.add(email, note);
+    res.json({ ok: true, recall: memories.recall(email) });
+  });
+
+  app.get('/api/memory/:email', (req, res) => {
+    res.json({ recall: memories.recall(req.params.email) });
   });
 
   return app;

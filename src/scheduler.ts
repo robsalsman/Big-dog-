@@ -2,6 +2,7 @@ import { syncAll } from './mail/ingest.js';
 import { triageNewMail } from './pipeline.js';
 import { generateDigest } from './digest.js';
 import { calcomConfigured, syncCalcomBookings } from './calcom.js';
+import { runCadenceSweep } from './cadence.js';
 import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
 import type { AccountsConfig } from './types.js';
@@ -51,6 +52,14 @@ export function startScheduler(
         const content = await generateDigest(brain);
         console.log(`[big-dog] morning digest ready for ${today}`);
         for (const n of notifiers) await n.notify(content).catch(() => {});
+
+        // Sweep for stalled deals and queue follow-up nudges.
+        const nudges = await runCadenceSweep({ cfg, accounts: accountsCfg, brain });
+        if (nudges.length) {
+          console.log(`[big-dog] queued ${nudges.length} follow-up nudge(s)`);
+          const msg = `🐕 Queued ${nudges.length} follow-up(s) for your approval:\n` + nudges.map((n) => `• ${n}`).join('\n');
+          for (const n of notifiers) await n.notify(msg).catch(() => {});
+        }
       } catch (err) {
         console.error('[big-dog] digest error:', (err as Error).message);
       }

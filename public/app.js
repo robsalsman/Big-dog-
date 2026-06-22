@@ -104,9 +104,12 @@ function renderInbox() {
           </div>
         </div>
         <div class="msg-body" id="body-${m.id}">${esc(m.body)}</div>
+        <div id="intel-${m.id}"></div>
         <div class="actions">
           <button class="btn small ghost" onclick="toggleBody('${m.id}')">Read</button>
           <button class="btn small primary" onclick="draftReply('${m.id}')">🐕 Draft my reply</button>
+          <button class="btn small" onclick="research('${m.id}','${esc(m.fromName)} ${esc(m.fromEmail)}')">🔎 Research</button>
+          <button class="btn small ghost" onclick="remember('${esc(m.fromEmail)}')">📝 Remember</button>
         </div>
       </div>`;
     })
@@ -116,6 +119,22 @@ function renderInbox() {
 window.toggleBody = (id) => {
   $('#body-' + id).classList.toggle('open');
   api(`/api/messages/${id}/read`, { method: 'POST' }).catch(() => {});
+};
+
+window.research = async (id, who) => {
+  const slot = $('#intel-' + id);
+  slot.innerHTML = '<div class="muted small" style="margin-top:8px">🔎 Researching…</div>';
+  try {
+    const { brief } = await api('/api/research', { method: 'POST', body: { query: who } });
+    slot.innerHTML = `<div class="card" style="margin-top:8px"><div class="muted small"><strong>🔎 Lead brief</strong></div><div class="markdown">${md(brief)}</div></div>`;
+  } catch (e) { slot.innerHTML = '<div class="muted small">Error: ' + esc(e.message) + '</div>'; }
+};
+
+window.remember = async (email) => {
+  const note = prompt(`What should Big Dog remember about ${email}?`);
+  if (!note) return;
+  try { await api('/api/memory', { method: 'POST', body: { email, note } }); toast('🐕 Got it — noted.'); }
+  catch (e) { toast('Error: ' + e.message); }
 };
 
 window.draftReply = async (id) => {
@@ -151,8 +170,23 @@ function renderPipeline() {
       return `<div class="col"><h3>${stage} (${inStage.length})</h3>${cards}</div>`;
     })
     .join('');
-  el.innerHTML = `<div class="board">${board}</div>`;
+  el.innerHTML = `
+    <div class="row" style="margin-bottom:14px">
+      <h2>Pipeline</h2>
+      <button class="btn small primary" onclick="runFollowups()">🐕 Run follow-ups</button>
+    </div>
+    <div class="board">${board}</div>`;
 }
+
+window.runFollowups = async () => {
+  toast('Big Dog is sweeping for stalled deals…');
+  try {
+    const { created } = await api('/api/cadence/run', { method: 'POST' });
+    await load();
+    if (created.length) { switchTab('drafts'); toast(`Queued ${created.length} follow-up(s) for approval.`); }
+    else toast('Nothing stalled — pipeline looks healthy. 🐕');
+  } catch (e) { toast('Error: ' + e.message); }
+};
 
 window.moveDeal = async (id, stage) => {
   try { await api(`/api/deals/${id}`, { method: 'PATCH', body: { stage } }); await load(); toast('Deal moved.'); }
@@ -259,15 +293,45 @@ function renderChat() {
   if (el.dataset.init) return;
   el.dataset.init = '1';
   el.innerHTML = `
+    <div class="card" style="border-left:3px solid var(--accent)">
+      <strong>🐕 Operator mode</strong>
+      <div class="muted small" style="margin:4px 0 10px">Tell Big Dog to <em>do</em> something — it'll work the tools and queue anything that needs your sign-off.</div>
+      <div class="chat-input">
+        <input id="op-goal" placeholder="e.g. follow up with everyone stuck in proposal stage" />
+        <button class="btn primary" onclick="operate()">Go do it</button>
+      </div>
+      <div id="op-out"></div>
+    </div>
     <div class="chatlog" id="chatlog">
-      <div class="bubble dog">What's up, ${esc(state.owner.name)}! Ask me anything about your deals, your day, or who's going cold.</div>
+      <div class="bubble dog">What's up, ${esc(state.owner.name)}! Ask me anything — or use Operator mode above to have me take action.</div>
     </div>
     <div class="chat-input">
       <input id="chat-q" placeholder="e.g. which deals are at risk this week?" />
       <button class="btn primary" onclick="ask()">Ask</button>
     </div>`;
   $('#chat-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') ask(); });
+  $('#op-goal').addEventListener('keydown', (e) => { if (e.key === 'Enter') operate(); });
 }
+
+window.operate = async () => {
+  const input = $('#op-goal');
+  const goal = input.value.trim();
+  if (!goal) return;
+  const out = $('#op-out');
+  out.innerHTML = '<div class="muted small" style="margin-top:10px">🐕 On it…</div>';
+  try {
+    const run = await api('/api/agent', { method: 'POST', body: { goal } });
+    const steps = (run.steps || [])
+      .map((s) => `<li><strong>${esc(s.tool)}</strong> — ${esc(s.observation).slice(0, 200)}</li>`)
+      .join('');
+    out.innerHTML =
+      `<div class="card" style="margin-top:10px"><div class="markdown">${md(run.final || '')}</div>` +
+      (steps ? `<details style="margin-top:8px"><summary class="muted small">how I got there (${run.steps.length} steps)</summary><ul>${steps}</ul></details>` : '') +
+      `</div>`;
+    await load();
+    toast('Big Dog ran the play.');
+  } catch (e) { out.innerHTML = '<div class="muted small">Error: ' + esc(e.message) + '</div>'; }
+};
 
 window.ask = async () => {
   const input = $('#chat-q');

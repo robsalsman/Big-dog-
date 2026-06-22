@@ -29,8 +29,25 @@ export class BigDogBrain {
     return this.provider.label;
   }
 
+  /** Raw persona-grounded completion — used by the agent loop. */
+  async raw(user: string, schema?: object, maxTokens = 1200): Promise<string> {
+    return this.provider.complete({ system: this.system, user, schema, maxTokens });
+  }
+
+  /** Live web research on a lead (only when the backend supports it). */
+  async research(query: string): Promise<string> {
+    if (this.provider.webResearch) {
+      try {
+        return await this.provider.webResearch(query);
+      } catch (err) {
+        return `Couldn't complete web research (${(err as Error).message}).`;
+      }
+    }
+    return 'Web research needs the Claude backend (BIGDOG_PROVIDER=anthropic with a key). Local Ollama has no web access.';
+  }
+
   // ── Triage one inbound message ────────────────────────────────────────
-  async analyze(m: Message, openDeal: Deal | null): Promise<MessageAnalysis> {
+  async analyze(m: Message, openDeal: Deal | null, memory = ''): Promise<MessageAnalysis> {
     if (!this.provider.live) return fallbackAnalysis(m);
 
     const schema = {
@@ -72,6 +89,7 @@ export class BigDogBrain {
     const context = openDeal
       ? `There is already an OPEN deal with this contact: "${openDeal.title}" (stage: ${openDeal.stage}, next step: ${openDeal.nextStep}).`
       : 'No existing open deal with this contact.';
+    const memoryBlock = memory ? `\n\nWhat you remember about this contact:\n${memory}\n` : '';
 
     try {
       const out = await this.provider.complete({
@@ -79,7 +97,7 @@ export class BigDogBrain {
         maxTokens: 1200,
         schema,
         user:
-          `Triage this inbound email like the sharp SDR you are. ${context}\n\n` +
+          `Triage this inbound email like the sharp SDR you are. ${context}${memoryBlock}\n\n` +
           `From: ${m.fromName} <${m.fromEmail}>\nSubject: ${m.subject}\nDate: ${m.date}\n\n${m.body.slice(0, 4000)}\n\n` +
           `Decide its priority (hot = real buying signal or time-sensitive, warm = worth a reply, cold = FYI/noise), ` +
           `a one-line summary, whether it's a sales opportunity (and the deal fields if so), and whether it's a meeting request. ` +
@@ -92,7 +110,11 @@ export class BigDogBrain {
   }
 
   // ── Draft a reply in the owner's voice ────────────────────────────────
-  async draftReply(m: Message, deal: Deal | null): Promise<{ subject: string; body: string; rationale: string }> {
+  async draftReply(
+    m: Message,
+    deal: Deal | null,
+    memory = '',
+  ): Promise<{ subject: string; body: string; rationale: string }> {
     if (!this.provider.live) return fallbackDraft(m, this.owner);
 
     const schema = {
@@ -109,6 +131,7 @@ export class BigDogBrain {
     const dealLine = deal
       ? `This ties to the deal "${deal.title}" (stage: ${deal.stage}). The agreed next step is: ${deal.nextStep}.`
       : 'No deal is open with this contact yet — qualify and drive toward a next step.';
+    const memoryBlock = memory ? `\n\nWhat you remember about this contact (use it to personalize):\n${memory}\n` : '';
 
     try {
       const out = await this.provider.complete({
@@ -116,7 +139,7 @@ export class BigDogBrain {
         maxTokens: 1500,
         schema,
         user:
-          `Write my reply to this email — as me, in my voice. ${dealLine}\n\n` +
+          `Write my reply to this email — as me, in my voice. ${dealLine}${memoryBlock}\n\n` +
           `From: ${m.fromName} <${m.fromEmail}>\nSubject: ${m.subject}\n\n${m.body.slice(0, 4000)}\n\n` +
           `Return the reply subject (keep "Re:" if appropriate), the full reply body (ready to send, signed off as me), ` +
           `and a one-sentence rationale for the angle you took. Respond with ONLY the JSON object.`,
@@ -124,6 +147,47 @@ export class BigDogBrain {
       return JSON.parse(extractJson(out)) as { subject: string; body: string; rationale: string };
     } catch {
       return fallbackDraft(m, this.owner);
+    }
+  }
+
+  // ── Draft a follow-up nudge for a stalled deal (cadence engine) ───────
+  async draftFollowUp(
+    deal: Deal,
+    reason: string,
+    memory = '',
+  ): Promise<{ subject: string; body: string; rationale: string }> {
+    if (!this.provider.live) {
+      return {
+        subject: `Following up — ${deal.title}`,
+        body: `Hi ${deal.contactName.split(' ')[0] || 'there'},\n\nCircling back on this — still keen to help you move it forward. Worth a quick call this week?\n\n${this.owner.signature}`,
+        rationale: `Fallback nudge (${reason}).`,
+      };
+    }
+    const schema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: { subject: { type: 'string' }, body: { type: 'string' }, rationale: { type: 'string' } },
+      required: ['subject', 'body', 'rationale'],
+    };
+    const memoryBlock = memory ? `\n\nWhat you remember about ${deal.contactName}:\n${memory}\n` : '';
+    try {
+      const out = await this.provider.complete({
+        system: this.system,
+        maxTokens: 1000,
+        schema,
+        user:
+          `Write a short, warm follow-up to ${deal.contactName} at ${deal.company} — as me, in my voice. ` +
+          `Why now: ${reason}. The deal is "${deal.title}" (stage: ${deal.stage}); the next step is "${deal.nextStep}".${memoryBlock}\n\n` +
+          `Keep it brief and non-needy. Re-open with a reason to talk, drive to the next step. ` +
+          `Respond with ONLY the JSON object {subject, body, rationale}.`,
+      });
+      return JSON.parse(extractJson(out)) as { subject: string; body: string; rationale: string };
+    } catch {
+      return {
+        subject: `Following up — ${deal.title}`,
+        body: `Hi ${deal.contactName.split(' ')[0] || 'there'},\n\nCircling back — still happy to help you get this over the line. Worth a quick call this week?\n\n${this.owner.signature}`,
+        rationale: `Fallback nudge (${reason}).`,
+      };
     }
   }
 

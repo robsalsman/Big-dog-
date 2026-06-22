@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DATA_DIR } from './config.js';
@@ -85,6 +86,15 @@ db.exec(`
     content TEXT,
     createdAt TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS memories (
+    id TEXT PRIMARY KEY,
+    contactEmail TEXT,
+    content TEXT,
+    createdAt TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_memories_contact ON memories(contactEmail);
 
   CREATE INDEX IF NOT EXISTS idx_messages_date ON messages(date DESC);
   CREATE INDEX IF NOT EXISTS idx_messages_deal ON messages(dealId);
@@ -201,6 +211,11 @@ export const drafts = {
       .prepare("SELECT * FROM drafts WHERE status = 'pending' ORDER BY createdAt DESC")
       .all() as Draft[];
   },
+  recentForDeal(dealId: string, sinceIso: string): Draft[] {
+    return db
+      .prepare("SELECT * FROM drafts WHERE dealId = ? AND createdAt >= ?")
+      .all(dealId, sinceIso) as Draft[];
+  },
   setStatus(id: string, status: Draft['status'], sentAt: string | null = null) {
     db.prepare('UPDATE drafts SET status = ?, sentAt = ? WHERE id = ?').run(status, sentAt, id);
   },
@@ -216,6 +231,32 @@ export const digests = {
   },
   latest(): Digest | undefined {
     return db.prepare('SELECT * FROM digests ORDER BY date DESC LIMIT 1').get() as Digest | undefined;
+  },
+};
+
+// ── Memories (long-term relationship context per contact) ────────────────
+export const memories = {
+  add(contactEmail: string, content: string) {
+    db.prepare('INSERT INTO memories (id, contactEmail, content, createdAt) VALUES (?, ?, ?, ?)').run(
+      randomUUID().slice(0, 16),
+      contactEmail.toLowerCase(),
+      content,
+      new Date().toISOString(),
+    );
+  },
+  forContact(contactEmail: string, limit = 12): { content: string; createdAt: string }[] {
+    return db
+      .prepare('SELECT content, createdAt FROM memories WHERE contactEmail = ? ORDER BY createdAt DESC LIMIT ?')
+      .all(contactEmail.toLowerCase(), limit) as { content: string; createdAt: string }[];
+  },
+  /** Compact recall string for prompt injection. */
+  recall(contactEmail: string): string {
+    const rows = this.forContact(contactEmail);
+    if (!rows.length) return '';
+    return rows.map((r) => `- ${r.content} (${r.createdAt.slice(0, 10)})`).join('\n');
+  },
+  count(): number {
+    return (db.prepare('SELECT COUNT(*) c FROM memories').get() as { c: number }).c;
   },
 };
 

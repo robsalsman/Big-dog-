@@ -14,6 +14,8 @@ export interface LLMProvider {
   complete(opts: { system: string; user: string; maxTokens?: number; schema?: object }): Promise<string>;
   /** Optional startup reachability check (used for nicer logs). */
   ping?(): Promise<boolean>;
+  /** Optional live web research (lead enrichment). Only backends with web access implement it. */
+  webResearch?(query: string): Promise<string>;
 }
 
 // ── Claude ────────────────────────────────────────────────────────────────
@@ -39,6 +41,29 @@ export class AnthropicProvider implements LLMProvider {
       system: opts.system,
       ...(opts.schema ? { output_config: { format: { type: 'json_schema', schema: opts.schema } } } : {}),
       messages: [{ role: 'user', content: opts.user }],
+    } as Anthropic.MessageCreateParamsNonStreaming);
+
+    return res.content
+      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      .map((b) => b.text)
+      .join('')
+      .trim();
+  }
+
+  async webResearch(query: string): Promise<string> {
+    const res = await this.client.messages.create({
+      model: this.model,
+      max_tokens: 1200,
+      messages: [
+        {
+          role: 'user',
+          content:
+            `Research this sales lead on the web and give me a tight brief: who they are, what the company does, ` +
+            `recent news or funding, the person's role, and one specific angle to open a conversation with. ` +
+            `Keep it under 200 words. Lead: ${query}`,
+        },
+      ],
+      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 4 }],
     } as Anthropic.MessageCreateParamsNonStreaming);
 
     return res.content

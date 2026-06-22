@@ -17,6 +17,8 @@ export interface AppConfig {
   anthropicKey: string | undefined;
   owner: Owner;
   accountsConfigPath: string;
+  cadenceStaleDays: number;
+  agentMaxSteps: number;
   // LLM backend
   provider: 'anthropic' | 'ollama' | 'auto';
   ollamaHost: string;
@@ -72,6 +74,8 @@ export function loadConfig(): AppConfig {
     anthropicKey: process.env.ANTHROPIC_API_KEY || undefined,
     owner,
     accountsConfigPath,
+    cadenceStaleDays: Number(process.env.BIGDOG_CADENCE_STALE_DAYS ?? 4),
+    agentMaxSteps: Number(process.env.BIGDOG_AGENT_MAX_STEPS ?? 8),
     provider,
     ollamaHost: process.env.OLLAMA_HOST || 'http://localhost:11434',
     ollamaModel: process.env.OLLAMA_MODEL || 'llama3.1',

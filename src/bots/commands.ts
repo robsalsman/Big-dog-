@@ -2,6 +2,8 @@ import { messages, deals, events } from '../db.js';
 import { syncAll } from '../mail/ingest.js';
 import { triageNewMail } from '../pipeline.js';
 import { generateDigest } from '../digest.js';
+import { runAgent } from '../agent/agent.js';
+import { runCadenceSweep } from '../cadence.js';
 import type { BigDogBrain } from '../brain.js';
 import type { AppConfig } from '../config.js';
 import type { AccountsConfig } from '../types.js';
@@ -15,6 +17,9 @@ export interface BotDeps {
 const HELP = [
   "What's up, Big Dog! 🐕 Here's what I answer to:",
   '',
+  '• /do <goal> — go DO it (draft, schedule, update deals…)',
+  '• /research <who> — web brief on a person or company',
+  '• /followups — queue nudges for stalled deals',
   '• /brief — your morning rundown',
   '• /sync — pull + triage the inbox now',
   '• /deals — open pipeline',
@@ -66,6 +71,27 @@ export async function routeMessage(rawText: string, deps: BotDeps): Promise<stri
 
   if (cmd === '/brief' || cmd === 'brief') {
     return generateDigest(deps.brain);
+  }
+
+  if (cmd.startsWith('/do ') || cmd === '/do') {
+    const goal = text.slice(3).trim();
+    if (!goal) return 'Tell me what to do, e.g. /do follow up with everyone in proposal stage';
+    const run = await runAgent(goal, deps);
+    const trace = run.steps.map((s) => `• ${s.tool}: ${s.observation.slice(0, 120)}`).join('\n');
+    return `🐕 ${run.final}` + (trace ? `\n\n— how I got there —\n${trace}` : '');
+  }
+
+  if (cmd.startsWith('/research ') || cmd === '/research') {
+    const q = text.slice(9).trim();
+    if (!q) return 'Who should I research? e.g. /research Acme Corp';
+    return deps.brain.research(q);
+  }
+
+  if (cmd === '/followups' || cmd === 'followups') {
+    const created = await runCadenceSweep(deps);
+    return created.length
+      ? `🐕 Queued ${created.length} follow-up(s) for approval:\n` + created.map((c) => `• ${c}`).join('\n')
+      : 'No stalled deals need a nudge right now. 🐕';
   }
 
   if (cmd === '/sync' || cmd === 'sync') {
