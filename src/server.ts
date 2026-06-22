@@ -8,7 +8,7 @@ import { sendMail } from './mail/send.js';
 import { triageNewMail } from './pipeline.js';
 import { generateDigest } from './digest.js';
 import { exportIcs } from './calendar.js';
-import type { BigDogBrain } from './claude.js';
+import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
 import type { AccountsConfig, DealStage, Draft } from './types.js';
 import { DEAL_STAGES } from './types.js';
@@ -28,6 +28,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     res.json({
       owner: cfg.owner,
       brainLive: brain.live,
+      backend: brain.backend,
       sendMode: cfg.sendMode,
       accounts: accountsCfg.accounts.map((a) => ({ id: a.id, label: a.label, email: a.email })),
       stages: DEAL_STAGES,

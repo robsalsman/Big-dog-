@@ -17,6 +17,13 @@ export interface AppConfig {
   anthropicKey: string | undefined;
   owner: Owner;
   accountsConfigPath: string;
+  // LLM backend
+  provider: 'anthropic' | 'ollama' | 'auto';
+  ollamaHost: string;
+  ollamaModel: string;
+  // Chat bots
+  telegram: { token: string; chatId: string } | undefined;
+  slack: { botToken: string; appToken: string; channel: string; webhookUrl: string } | undefined;
 }
 
 const DEFAULT_OWNER: Owner = {
@@ -44,6 +51,15 @@ export function loadConfig(): AppConfig {
   const accountsConfigPath = resolve(ROOT, 'config', 'accounts.json');
   const { owner } = loadAccountsConfig(accountsConfigPath);
 
+  const providerRaw = (process.env.BIGDOG_PROVIDER || 'auto').toLowerCase();
+  const provider: AppConfig['provider'] =
+    providerRaw === 'anthropic' || providerRaw === 'ollama' ? providerRaw : 'auto';
+
+  const tgToken = process.env.TELEGRAM_BOT_TOKEN?.trim();
+  const slackBot = process.env.SLACK_BOT_TOKEN?.trim();
+  const slackApp = process.env.SLACK_APP_TOKEN?.trim();
+  const slackWebhook = process.env.SLACK_WEBHOOK_URL?.trim();
+
   return {
     model: process.env.BIGDOG_MODEL || 'claude-opus-4-8',
     port: Number(process.env.PORT || 4137),
@@ -53,6 +69,19 @@ export function loadConfig(): AppConfig {
     anthropicKey: process.env.ANTHROPIC_API_KEY || undefined,
     owner,
     accountsConfigPath,
+    provider,
+    ollamaHost: process.env.OLLAMA_HOST || 'http://localhost:11434',
+    ollamaModel: process.env.OLLAMA_MODEL || 'llama3.1',
+    telegram: tgToken ? { token: tgToken, chatId: process.env.TELEGRAM_CHAT_ID?.trim() || '' } : undefined,
+    slack:
+      (slackBot && slackApp) || slackWebhook
+        ? {
+            botToken: slackBot || '',
+            appToken: slackApp || '',
+            channel: process.env.SLACK_CHANNEL?.trim() || '',
+            webhookUrl: slackWebhook || '',
+          }
+        : undefined,
   };
 }
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { messages, deals, events, digests } from './db.js';
-import type { BigDogBrain } from './claude.js';
+import type { BigDogBrain } from './brain.js';
 
 /**
  * Generate (and store) the morning "What's up, Big Dog!?" briefing for today.

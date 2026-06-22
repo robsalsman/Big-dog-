@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { messages, deals, events } from './db.js';
-import type { BigDogBrain } from './claude.js';
+import type { BigDogBrain } from './brain.js';
 import type { Deal, CalendarEvent } from './types.js';
 
 /**

@@ -1,29 +1,48 @@
 import { loadConfig, loadAccounts } from './config.js';
-import { BigDogBrain } from './claude.js';
+import { BigDogBrain } from './brain.js';
+import { selectProvider } from './llm/provider.js';
 import { createServer } from './server.js';
 import { startScheduler } from './scheduler.js';
+import { startBots } from './bots/index.js';
 import { seedDemoData } from './seed.js';
 
-function main() {
+async function main() {
   const cfg = loadConfig();
   const accountsCfg = loadAccounts();
-  const brain = new BigDogBrain(cfg);
+
+  // Pick the LLM backend (Claude or local Ollama) and build the brain.
+  const provider = selectProvider({
+    provider: cfg.provider,
+    anthropicKey: cfg.anthropicKey,
+    model: cfg.model,
+    ollamaHost: cfg.ollamaHost,
+    ollamaModel: cfg.ollamaModel,
+  });
+  if (provider.ping) await provider.ping();
+  const brain = new BigDogBrain(provider, cfg.owner);
 
   // Make sure there's something to look at on first run.
   seedDemoData();
 
   const app = createServer(cfg, accountsCfg, brain);
-  startScheduler(cfg, accountsCfg, brain);
+  const notifiers = await startBots({ cfg, accounts: accountsCfg, brain });
+  startScheduler(cfg, accountsCfg, brain, notifiers);
 
   app.listen(cfg.port, () => {
     console.log('');
     console.log("  🐕  What's up, Big Dog!?");
     console.log(`      Dashboard:  http://localhost:${cfg.port}`);
-    console.log(`      Brain:      ${brain.live ? `live (${cfg.model})` : 'offline — add ANTHROPIC_API_KEY to .env'}`);
+    console.log(
+      `      Brain:      ${brain.live ? `live (${brain.backend})` : `offline (${brain.backend}) — set BIGDOG_PROVIDER`}`,
+    );
     console.log(`      Mailboxes:  ${accountsCfg.accounts.length || 'none yet — see config/accounts.example.json'}`);
+    console.log(`      Bots:       ${notifiers.length ? `${notifiers.length} connected` : 'none (add Telegram/Slack tokens to .env)'}`);
     console.log(`      Send mode:  ${cfg.sendMode}`);
     console.log('');
   });
 }
 
-main();
+main().catch((err) => {
+  console.error('[big-dog] fatal:', err);
+  process.exit(1);
+});

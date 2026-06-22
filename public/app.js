@@ -64,7 +64,7 @@ async function load() {
   state = await api('/api/state');
   $('#tagline').textContent = `What's up, ${state.owner.name}!?`;
   const pill = $('#brain-pill');
-  pill.textContent = state.brainLive ? 'brain: live' : 'brain: offline';
+  pill.textContent = state.brainLive ? `brain: ${state.backend}` : 'brain: offline';
   pill.className = 'pill ' + (state.brainLive ? 'live' : 'offline');
   renderAll();
 }

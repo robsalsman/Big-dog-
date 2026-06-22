@@ -1,44 +1,37 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { bigDogSystemPrompt } from './persona.js';
-import type { AppConfig } from './config.js';
+import type { LLMProvider } from './llm/provider.js';
 import type { Message, Deal, CalendarEvent, MessageAnalysis, Owner } from './types.js';
 
 /**
- * The Big Dog brain. Wraps Claude (claude-opus-4-8) for the four jobs that
- * actually need intelligence: triaging mail, drafting replies in the owner's
- * voice, writing the morning digest, and answering questions about the
- * pipeline. If no API key is configured, every method falls back to a simple
- * deterministic version so the app still runs end-to-end.
+ * The Big Dog brain. Wraps whatever LLM backend is configured (Claude or a
+ * local Ollama model) for the four jobs that actually need intelligence:
+ * triaging mail, drafting replies in the owner's voice, writing the morning
+ * digest, and answering questions about the pipeline. If no model is live, or
+ * a call fails, every method falls back to a simple deterministic version so
+ * the app still runs end-to-end.
  */
 export class BigDogBrain {
-  private client: Anthropic | null;
-  private model: string;
+  private provider: LLMProvider;
   private owner: Owner;
   private system: string;
 
-  constructor(cfg: AppConfig) {
-    this.client = cfg.anthropicKey ? new Anthropic({ apiKey: cfg.anthropicKey }) : null;
-    this.model = cfg.model;
-    this.owner = cfg.owner;
-    this.system = bigDogSystemPrompt(cfg.owner);
+  constructor(provider: LLMProvider, owner: Owner) {
+    this.provider = provider;
+    this.owner = owner;
+    this.system = bigDogSystemPrompt(owner);
   }
 
   get live(): boolean {
-    return this.client !== null;
+    return this.provider.live;
   }
 
-  /** Pull the first text block out of a response. */
-  private text(message: Anthropic.Message): string {
-    return message.content
-      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-      .map((b) => b.text)
-      .join('')
-      .trim();
+  get backend(): string {
+    return this.provider.label;
   }
 
   // ── Triage one inbound message ────────────────────────────────────────
   async analyze(m: Message, openDeal: Deal | null): Promise<MessageAnalysis> {
-    if (!this.client) return fallbackAnalysis(m);
+    if (!this.provider.live) return fallbackAnalysis(m);
 
     const schema = {
       type: 'object',
@@ -54,10 +47,7 @@ export class BigDogBrain {
             title: { type: 'string' },
             company: { type: 'string' },
             contactName: { type: 'string' },
-            suggestedStage: {
-              type: 'string',
-              enum: ['new', 'qualified', 'proposal', 'won', 'lost'],
-            },
+            suggestedStage: { type: 'string', enum: ['new', 'qualified', 'proposal', 'won', 'lost'] },
             estimatedValue: { type: ['number', 'null'] },
             nextStep: { type: 'string' },
           },
@@ -83,37 +73,27 @@ export class BigDogBrain {
       ? `There is already an OPEN deal with this contact: "${openDeal.title}" (stage: ${openDeal.stage}, next step: ${openDeal.nextStep}).`
       : 'No existing open deal with this contact.';
 
-    const res = await this.client.messages.create({
-      model: this.model,
-      max_tokens: 1200,
-      thinking: { type: 'adaptive' },
-      system: this.system,
-      output_config: { format: { type: 'json_schema', schema } },
-      messages: [
-        {
-          role: 'user',
-          content:
-            `Triage this inbound email like the sharp SDR you are. ${context}\n\n` +
-            `From: ${m.fromName} <${m.fromEmail}>\nSubject: ${m.subject}\nDate: ${m.date}\n\n${m.body.slice(0, 4000)}\n\n` +
-            `Decide its priority (hot = real buying signal or time-sensitive, warm = worth a reply, cold = FYI/noise), ` +
-            `a one-line summary, whether it's a sales opportunity (and the deal fields if so), and whether it's a meeting request.`,
-        },
-      ],
-    });
-
     try {
-      return JSON.parse(this.text(res)) as MessageAnalysis;
+      const out = await this.provider.complete({
+        system: this.system,
+        maxTokens: 1200,
+        schema,
+        user:
+          `Triage this inbound email like the sharp SDR you are. ${context}\n\n` +
+          `From: ${m.fromName} <${m.fromEmail}>\nSubject: ${m.subject}\nDate: ${m.date}\n\n${m.body.slice(0, 4000)}\n\n` +
+          `Decide its priority (hot = real buying signal or time-sensitive, warm = worth a reply, cold = FYI/noise), ` +
+          `a one-line summary, whether it's a sales opportunity (and the deal fields if so), and whether it's a meeting request. ` +
+          `Respond with ONLY the JSON object.`,
+      });
+      return JSON.parse(extractJson(out)) as MessageAnalysis;
     } catch {
       return fallbackAnalysis(m);
     }
   }
 
   // ── Draft a reply in the owner's voice ────────────────────────────────
-  async draftReply(
-    m: Message,
-    deal: Deal | null,
-  ): Promise<{ subject: string; body: string; rationale: string }> {
-    if (!this.client) return fallbackDraft(m, this.owner);
+  async draftReply(m: Message, deal: Deal | null): Promise<{ subject: string; body: string; rationale: string }> {
+    if (!this.provider.live) return fallbackDraft(m, this.owner);
 
     const schema = {
       type: 'object',
@@ -130,38 +110,26 @@ export class BigDogBrain {
       ? `This ties to the deal "${deal.title}" (stage: ${deal.stage}). The agreed next step is: ${deal.nextStep}.`
       : 'No deal is open with this contact yet — qualify and drive toward a next step.';
 
-    const res = await this.client.messages.create({
-      model: this.model,
-      max_tokens: 1500,
-      thinking: { type: 'adaptive' },
-      system: this.system,
-      output_config: { format: { type: 'json_schema', schema } },
-      messages: [
-        {
-          role: 'user',
-          content:
-            `Write my reply to this email — as me, in my voice. ${dealLine}\n\n` +
-            `From: ${m.fromName} <${m.fromEmail}>\nSubject: ${m.subject}\n\n${m.body.slice(0, 4000)}\n\n` +
-            `Return the reply subject (keep "Re:" if appropriate), the full reply body (ready to send, signed off as me), ` +
-            `and a one-sentence rationale for the angle you took.`,
-        },
-      ],
-    });
-
     try {
-      return JSON.parse(this.text(res)) as { subject: string; body: string; rationale: string };
+      const out = await this.provider.complete({
+        system: this.system,
+        maxTokens: 1500,
+        schema,
+        user:
+          `Write my reply to this email — as me, in my voice. ${dealLine}\n\n` +
+          `From: ${m.fromName} <${m.fromEmail}>\nSubject: ${m.subject}\n\n${m.body.slice(0, 4000)}\n\n` +
+          `Return the reply subject (keep "Re:" if appropriate), the full reply body (ready to send, signed off as me), ` +
+          `and a one-sentence rationale for the angle you took. Respond with ONLY the JSON object.`,
+      });
+      return JSON.parse(extractJson(out)) as { subject: string; body: string; rationale: string };
     } catch {
       return fallbackDraft(m, this.owner);
     }
   }
 
   // ── Morning "What's up, Big Dog!?" digest ─────────────────────────────
-  async digest(
-    hotMessages: Message[],
-    deals: Deal[],
-    events: CalendarEvent[],
-  ): Promise<string> {
-    if (!this.client) return fallbackDigest(this.owner, hotMessages, deals, events);
+  async digest(hotMessages: Message[], deals: Deal[], events: CalendarEvent[]): Promise<string> {
+    if (!this.provider.live) return fallbackDigest(this.owner, hotMessages, deals, events);
 
     const dealLines = deals
       .map(
@@ -171,44 +139,36 @@ export class BigDogBrain {
           `, last activity ${d.lastActivity.slice(0, 10)}`,
       )
       .join('\n');
-    const msgLines = hotMessages
-      .map((m) => `- [${m.priority}] ${m.fromName}: ${m.summary ?? m.subject}`)
-      .join('\n');
+    const msgLines = hotMessages.map((m) => `- [${m.priority}] ${m.fromName}: ${m.summary ?? m.subject}`).join('\n');
     const evtLines = events
       .map((e) => `- ${e.start.slice(0, 16).replace('T', ' ')} ${e.title} (${e.attendees})`)
       .join('\n');
 
-    const res = await this.client.messages.create({
-      model: this.model,
-      max_tokens: 1600,
-      thinking: { type: 'adaptive' },
-      system: this.system,
-      messages: [
-        {
-          role: 'user',
-          content:
-            `Write my morning briefing. Open with "What's up, Big Dog!?" energy. Be punchy and decisive — ` +
-            `tell me exactly what to focus on, which deals are going cold, and what you (Big Dog) are handling for me.\n\n` +
-            `Use short Markdown sections. End with a "Big Dog is on it" line listing what you'll take off my plate today.\n\n` +
-            `=== Today's calendar ===\n${evtLines || '(nothing scheduled)'}\n\n` +
-            `=== Hot/warm threads ===\n${msgLines || '(inbox quiet)'}\n\n` +
-            `=== Open deals ===\n${dealLines || '(no open deals)'}`,
-        },
-      ],
-    });
-    return this.text(res);
+    try {
+      const out = await this.provider.complete({
+        system: this.system,
+        maxTokens: 1600,
+        user:
+          `Write my morning briefing. Open with "What's up, Big Dog!?" energy. Be punchy and decisive — ` +
+          `tell me exactly what to focus on, which deals are going cold, and what you (Big Dog) are handling for me.\n\n` +
+          `Use short Markdown sections. End with a "Big Dog is on it" line listing what you'll take off my plate today.\n\n` +
+          `=== Today's calendar ===\n${evtLines || '(nothing scheduled)'}\n\n` +
+          `=== Hot/warm threads ===\n${msgLines || '(inbox quiet)'}\n\n` +
+          `=== Open deals ===\n${dealLines || '(no open deals)'}`,
+      });
+      return out || fallbackDigest(this.owner, hotMessages, deals, events);
+    } catch {
+      return fallbackDigest(this.owner, hotMessages, deals, events);
+    }
   }
 
   // ── Chat about the pipeline ───────────────────────────────────────────
-  async chat(
-    question: string,
-    deals: Deal[],
-    recentMessages: Message[],
-    events: CalendarEvent[],
-  ): Promise<string> {
-    if (!this.client) {
-      return `Big Dog's brain is offline — add ANTHROPIC_API_KEY to .env and I'll think for real. ` +
-        `Right now you've got ${deals.length} open deals and ${events.length} things on the calendar.`;
+  async chat(question: string, deals: Deal[], recentMessages: Message[], events: CalendarEvent[]): Promise<string> {
+    if (!this.provider.live) {
+      return (
+        `Big Dog's brain is offline — set BIGDOG_PROVIDER (ANTHROPIC_API_KEY for Claude, or a local Ollama model) and I'll think for real. ` +
+        `Right now you've got ${deals.length} open deals and ${events.length} things on the calendar.`
+      );
     }
 
     const snapshot =
@@ -216,23 +176,29 @@ export class BigDogBrain {
       `Recent threads:\n${recentMessages.slice(0, 15).map((m) => `- ${m.fromName}: ${m.summary ?? m.subject}`).join('\n') || '(none)'}\n\n` +
       `Upcoming calendar:\n${events.slice(0, 10).map((e) => `- ${e.start.slice(0, 16).replace('T', ' ')} ${e.title}`).join('\n') || '(none)'}`;
 
-    const res = await this.client.messages.create({
-      model: this.model,
-      max_tokens: 1200,
-      thinking: { type: 'adaptive' },
-      system: this.system,
-      messages: [
-        {
-          role: 'user',
-          content: `Here's the current state of my world:\n\n${snapshot}\n\n---\n\nMy question: ${question}`,
-        },
-      ],
-    });
-    return this.text(res);
+    try {
+      return await this.provider.complete({
+        system: this.system,
+        maxTokens: 1200,
+        user: `Here's the current state of my world:\n\n${snapshot}\n\n---\n\nMy question: ${question}`,
+      });
+    } catch (err) {
+      return `Big Dog hit a snag reaching the model (${(err as Error).message}). Check your provider is up.`;
+    }
   }
 }
 
-// ── Deterministic fallbacks (used when no API key is set) ────────────────
+/** Pull a JSON object out of a model response that may wrap it in prose/fences. */
+function extractJson(text: string): string {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenced?.[1]) return fenced[1].trim();
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start !== -1 && end > start) return text.slice(start, end + 1);
+  return text.trim();
+}
+
+// ── Deterministic fallbacks (used when no model is live) ─────────────────
 function fallbackAnalysis(m: Message): MessageAnalysis {
   const text = `${m.subject} ${m.body}`.toLowerCase();
   const meeting = /\b(meet|call|demo|calendar|available|schedule|zoom|sync)\b/.test(text);
@@ -267,17 +233,17 @@ function fallbackDraft(m: Message, owner: Owner): { subject: string; body: strin
       `Hi ${first},\n\nThanks for reaching out — good to connect. ` +
       `Happy to dig in on this. What does the next week look like for a quick call so I can get you exactly what you need?\n\n` +
       `${owner.signature}`,
-    rationale: 'Template fallback (no API key): warm open, drives to a call.',
+    rationale: 'Template fallback (no model live): warm open, drives to a call.',
   };
 }
 
 function fallbackDigest(owner: Owner, msgs: Message[], deals: Deal[], events: CalendarEvent[]): string {
   return (
     `## What's up, Big Dog!? 🐕\n\n` +
-    `Brain's offline (no API key) so here's the raw rundown for ${owner.name}:\n\n` +
+    `Brain's offline (no model live) so here's the raw rundown for ${owner.name}:\n\n` +
     `**Calendar:** ${events.length} item(s) coming up.\n\n` +
     `**Threads needing you:** ${msgs.length}.\n\n` +
     `**Open deals:** ${deals.length}.\n\n` +
-    `_Add ANTHROPIC_API_KEY to .env to get the real Big Dog briefing._`
+    `_Set BIGDOG_PROVIDER (Claude key or local Ollama) to get the real Big Dog briefing._`
   );
 }
