@@ -7,9 +7,10 @@ self-hosted app. Big Dog pulls all your work mailboxes into one inbox, puts
 everything on one calendar, works your deals, and keeps you briefed — writing and
 sending email in *your* voice with CEO-level intellect and hustle.
 
-Runs on [Claude](https://www.anthropic.com/) (`claude-opus-4-8`) **or a fully local
-[Ollama](https://ollama.com) model** (zero API cost). Chat with it from the web
-dashboard, **Telegram, or Slack**.
+Runs on [Claude](https://www.anthropic.com/), **[ChatGPT](https://platform.openai.com/),
+or a fully local [Ollama](https://ollama.com) model** (zero API cost) — pick your
+backend and paste your own key right in the app (**⚙ Settings**), no config files.
+Chat with it from the web dashboard, **Telegram, or Slack**.
 
 ---
 
@@ -84,6 +85,21 @@ Open **http://localhost:4137**.
 Without a brain configured it still runs end-to-end using simple fallbacks. Add a
 Claude key **or** point it at a local Ollama model to get the real "clone of you"
 intelligence.
+
+---
+
+## Choose your AI (no config files)
+
+Open the **⚙ Settings** tab and pick a backend — **Claude**, **ChatGPT**, or local
+**Ollama** — and paste your own API key. It's stored locally, takes effect
+immediately (no restart), and there's a **Test connection** button. This is what
+makes Big Dog shareable: hand someone the app and they just drop in their key.
+
+> Heads up: **web research, prospecting, and email-pattern learning use the Claude
+> backend** (it has built-in web access). On ChatGPT/Ollama everything else works;
+> those web features return a clear "needs Claude" message. Advanced: set
+> `OPENAI_BASE_URL` to use any OpenAI-compatible endpoint (Azure, OpenRouter, LM
+> Studio, vLLM, …).
 
 ---
 
@@ -212,9 +228,12 @@ it every few minutes.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `BIGDOG_PROVIDER` | `auto` | Brain backend: `auto` · `anthropic` · `ollama`. |
+| `BIGDOG_PROVIDER` | `auto` | Default backend: `auto` · `anthropic` · `openai` · `ollama` (also settable in-app). |
 | `ANTHROPIC_API_KEY` | — | Your Claude key (for `anthropic`/`auto`). |
 | `BIGDOG_MODEL` | `claude-opus-4-8` | The Claude model behind your clone. |
+| `OPENAI_API_KEY` | — | Your ChatGPT key (for `openai`/`auto`). |
+| `OPENAI_MODEL` | `gpt-4o` | The OpenAI model to use. |
+| `OPENAI_BASE_URL` | OpenAI | Any OpenAI-compatible endpoint (Azure/OpenRouter/LM Studio/…). |
 | `OLLAMA_HOST` | `http://localhost:11434` | Local Ollama endpoint. |
 | `OLLAMA_MODEL` | `llama3.1` | Local model to run. |
 | `PORT` | `4137` | Dashboard port. |
@@ -240,7 +259,8 @@ src/
   config.ts         Loads .env + config/accounts.json
   persona.ts        The Big Dog system prompt (your clone)
   brain.ts          The brain — triage, drafting, digest, chat (provider-agnostic)
-  llm/provider.ts   Pluggable LLM backends: Claude · local Ollama · fallback
+  llm/provider.ts   Pluggable LLM backends: Claude · ChatGPT · Ollama · fallback
+  settings.ts       Runtime backend/key settings (the ⚙ Settings screen)
   db.ts             SQLite store (messages, deals, events, drafts, digests)
   mail/ingest.ts    IMAP → normalized messages
   mail/send.ts      SMTP send

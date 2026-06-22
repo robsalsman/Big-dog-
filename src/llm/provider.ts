@@ -189,19 +189,83 @@ export class NullProvider implements LLMProvider {
   }
 }
 
+// ── OpenAI / ChatGPT ──────────────────────────────────────────────────────
+export class OpenAIProvider implements LLMProvider {
+  private apiKey: string;
+  private model: string;
+  private baseUrl: string;
+  readonly live = true;
+
+  // baseUrl lets you target any OpenAI-compatible endpoint (Azure, OpenRouter,
+  // LM Studio, vLLM, …) — set OPENAI_BASE_URL. Defaults to OpenAI itself.
+  constructor(apiKey: string, model: string, baseUrl = 'https://api.openai.com/v1') {
+    this.apiKey = apiKey;
+    this.model = model;
+    this.baseUrl = baseUrl.replace(/\/$/, '');
+  }
+
+  get label(): string {
+    return `openai:${this.model}`;
+  }
+
+  async complete(opts: { system: string; user: string; maxTokens?: number; schema?: object }): Promise<string> {
+    const res = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens: opts.maxTokens ?? 1200,
+        // json_object guarantees valid JSON without strict-schema constraints.
+        ...(opts.schema ? { response_format: { type: 'json_object' } } : {}),
+        messages: [
+          { role: 'system', content: opts.system },
+          { role: 'user', content: opts.user },
+        ],
+      }),
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!res.ok) throw new Error(`openai ${res.status}: ${await res.text().catch(() => '')}`);
+    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    return (data.choices?.[0]?.message?.content ?? '').trim();
+  }
+
+  async ping(): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/models`, {
+        headers: { Authorization: `Bearer ${this.apiKey}` },
+        signal: AbortSignal.timeout(5000),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
 export interface ProviderConfig {
-  provider: 'anthropic' | 'ollama' | 'auto';
+  provider: 'anthropic' | 'openai' | 'ollama' | 'auto';
   anthropicKey: string | undefined;
-  model: string;
+  anthropicModel: string;
+  openaiKey: string | undefined;
+  openaiModel: string;
+  openaiBaseUrl?: string;
   ollamaHost: string;
   ollamaModel: string;
 }
 
-/** Pick the backend per config. `auto` prefers Claude, then local Ollama. */
+/** Pick the backend per config. `auto` prefers Claude, then ChatGPT, then local Ollama. */
 export function selectProvider(cfg: ProviderConfig): LLMProvider {
-  const wantAnthropic = cfg.provider === 'anthropic' || (cfg.provider === 'auto' && !!cfg.anthropicKey);
-  if (wantAnthropic && cfg.anthropicKey) return new AnthropicProvider(cfg.anthropicKey, cfg.model);
-  if (cfg.provider === 'anthropic') return new NullProvider(); // asked for Claude but no key
-  if (cfg.provider === 'ollama' || cfg.provider === 'auto') return new OllamaProvider(cfg.ollamaHost, cfg.ollamaModel);
-  return new NullProvider();
+  const openai = () => new OpenAIProvider(cfg.openaiKey!, cfg.openaiModel, cfg.openaiBaseUrl);
+  switch (cfg.provider) {
+    case 'anthropic':
+      return cfg.anthropicKey ? new AnthropicProvider(cfg.anthropicKey, cfg.anthropicModel) : new NullProvider();
+    case 'openai':
+      return cfg.openaiKey ? openai() : new NullProvider();
+    case 'ollama':
+      return new OllamaProvider(cfg.ollamaHost, cfg.ollamaModel);
+    default: // auto
+      if (cfg.anthropicKey) return new AnthropicProvider(cfg.anthropicKey, cfg.anthropicModel);
+      if (cfg.openaiKey) return openai();
+      return new OllamaProvider(cfg.ollamaHost, cfg.ollamaModel);
+  }
 }

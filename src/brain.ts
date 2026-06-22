@@ -29,6 +29,11 @@ export class BigDogBrain {
     return this.provider.label;
   }
 
+  /** Swap the LLM backend at runtime (from the in-app Settings screen). */
+  setProvider(provider: LLMProvider): void {
+    this.provider = provider;
+  }
+
   /** Raw persona-grounded completion — used by the agent loop. */
   async raw(user: string, schema?: object, maxTokens = 1200): Promise<string> {
     return this.provider.complete({ system: this.system, user, schema, maxTokens });

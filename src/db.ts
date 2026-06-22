@@ -104,6 +104,11 @@ db.exec(`
     updatedAt TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );
+
   CREATE INDEX IF NOT EXISTS idx_messages_date ON messages(date DESC);
   CREATE INDEX IF NOT EXISTS idx_messages_deal ON messages(dealId);
   CREATE INDEX IF NOT EXISTS idx_events_start ON events(start);
@@ -311,6 +316,25 @@ export const patterns = {
       `INSERT INTO patterns (domain, patternKey, sample, source, updatedAt) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(domain) DO UPDATE SET patternKey=excluded.patternKey, sample=excluded.sample, source=excluded.source, updatedAt=excluded.updatedAt`,
     ).run(domain.toLowerCase(), patternKey, sample, source, new Date().toISOString());
+  },
+};
+
+// ── Settings (runtime config: provider + keys, set from the dashboard) ───
+export const settingsStore = {
+  get(key: string): string | undefined {
+    const r = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
+    return r?.value;
+  },
+  set(key: string, value: string) {
+    db.prepare(
+      'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+    ).run(key, value);
+  },
+  all(): Record<string, string> {
+    const rows = db.prepare('SELECT key, value FROM settings').all() as { key: string; value: string }[];
+    const out: Record<string, string> = {};
+    for (const r of rows) out[r.key] = r.value;
+    return out;
   },
 };
 

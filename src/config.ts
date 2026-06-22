@@ -21,9 +21,12 @@ export interface AppConfig {
   cadenceStaleDays: number;
   agentMaxSteps: number;
   // LLM backend
-  provider: 'anthropic' | 'ollama' | 'auto';
+  provider: 'anthropic' | 'openai' | 'ollama' | 'auto';
   ollamaHost: string;
   ollamaModel: string;
+  openaiKey: string | undefined;
+  openaiModel: string;
+  openaiBaseUrl: string;
   // Chat bots
   telegram: { token: string; chatId: string } | undefined;
   slack: { botToken: string; appToken: string; channel: string; webhookUrl: string } | undefined;
@@ -61,7 +64,7 @@ export function loadConfig(): AppConfig {
 
   const providerRaw = (process.env.BIGDOG_PROVIDER || 'auto').toLowerCase();
   const provider: AppConfig['provider'] =
-    providerRaw === 'anthropic' || providerRaw === 'ollama' ? providerRaw : 'auto';
+    providerRaw === 'anthropic' || providerRaw === 'openai' || providerRaw === 'ollama' ? providerRaw : 'auto';
 
   const apolloKey = process.env.APOLLO_API_KEY?.trim();
   const prospectRaw = (process.env.BIGDOG_PROSPECT_PROVIDER || 'auto').toLowerCase();
@@ -90,6 +93,9 @@ export function loadConfig(): AppConfig {
     provider,
     ollamaHost: process.env.OLLAMA_HOST || 'http://localhost:11434',
     ollamaModel: process.env.OLLAMA_MODEL || 'llama3.1',
+    openaiKey: process.env.OPENAI_API_KEY || undefined,
+    openaiModel: process.env.OPENAI_MODEL || 'gpt-4o',
+    openaiBaseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
     calcom: calcomKey
       ? {
           apiKey: calcomKey,

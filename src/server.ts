@@ -6,6 +6,7 @@ import { messages, deals, events, drafts, memories } from './db.js';
 import { runAgent } from './agent/agent.js';
 import { runCadenceSweep } from './cadence.js';
 import { findProspects, saveProspectAsDeal, activeProvider, findContactEmail } from './prospect.js';
+import { loadSettings, saveSettings, buildProvider, publicSettings, testProvider } from './settings.js';
 import type { Prospect } from './types.js';
 import { syncAll } from './mail/ingest.js';
 import { sendMail } from './mail/send.js';
@@ -306,6 +307,28 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // ── LLM backend settings (Claude / ChatGPT / Ollama) ────────────────
+  app.get('/api/settings', (_req, res) => {
+    res.json({ ...publicSettings(loadSettings(cfg)), backend: brain.backend, live: brain.live });
+  });
+
+  app.post('/api/settings', async (req, res) => {
+    saveSettings(req.body ?? {});
+    const provider = buildProvider(loadSettings(cfg));
+    if (provider.ping) await provider.ping();
+    brain.setProvider(provider);
+    res.json({ ...publicSettings(loadSettings(cfg)), backend: brain.backend, live: brain.live });
+  });
+
+  app.post('/api/settings/test', async (req, res) => {
+    // Test the saved settings, optionally with proposed overrides from the form.
+    const merged = { ...loadSettings(cfg), ...(req.body ?? {}) };
+    // Ignore empty key fields in the proposed override so a blank doesn't wipe.
+    if (!req.body?.anthropicKey) merged.anthropicKey = loadSettings(cfg).anthropicKey;
+    if (!req.body?.openaiKey) merged.openaiKey = loadSettings(cfg).openaiKey;
+    res.json(await testProvider(buildProvider(merged)));
   });
 
   // ── Search across the inbox + pipeline ──────────────────────────────

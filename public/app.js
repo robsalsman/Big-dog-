@@ -464,6 +464,89 @@ window.addLead = async (pjson, i) => {
   } catch (e) { toast('Error: ' + e.message); }
 };
 
+// ── Settings (LLM backend) ───────────────────────────────────────────────
+async function renderSettings() {
+  const el = $('#settings');
+  el.innerHTML = '<div class="muted">Loading…</div>';
+  let s;
+  try { s = await api('/api/settings'); } catch (e) { el.innerHTML = 'Error: ' + esc(e.message); return; }
+  const sel = (v) => (s.provider === v ? 'selected' : '');
+  el.innerHTML = `
+    <h2>Settings — your AI backend</h2>
+    <div class="muted small" style="margin-bottom:14px">
+      Pick who powers Big Dog and drop in your own key. Stored locally on this machine — keys never leave it except to call the model you choose.
+      Current: <strong>${s.live ? esc(s.backend) : 'offline'}</strong>.
+    </div>
+
+    <div class="card">
+      <label class="small muted">Backend</label>
+      <select id="set-provider" class="subj" style="max-width:260px">
+        <option value="auto" ${sel('auto')}>Auto (Claude → ChatGPT → Ollama)</option>
+        <option value="anthropic" ${sel('anthropic')}>Claude (Anthropic)</option>
+        <option value="openai" ${sel('openai')}>ChatGPT (OpenAI)</option>
+        <option value="ollama" ${sel('ollama')}>Local (Ollama)</option>
+      </select>
+    </div>
+
+    <div class="card">
+      <strong>Claude (Anthropic)</strong> ${s.anthropicKeySet ? `<span class="tag warm">key set ${esc(s.anthropicKeyHint)}</span>` : ''}
+      <div class="muted small" style="margin:4px 0 8px">Get a key at console.anthropic.com. Best quality + powers web research/prospecting.</div>
+      <input class="subj" id="set-anthropicKey" type="password" placeholder="${s.anthropicKeySet ? 'leave blank to keep current key' : 'sk-ant-…'}" />
+      <input class="subj" id="set-anthropicModel" value="${esc(s.anthropicModel)}" placeholder="claude-opus-4-8" />
+    </div>
+
+    <div class="card">
+      <strong>ChatGPT (OpenAI)</strong> ${s.openaiKeySet ? `<span class="tag warm">key set ${esc(s.openaiKeyHint)}</span>` : ''}
+      <div class="muted small" style="margin:4px 0 8px">Get a key at platform.openai.com. Note: web research/prospecting need the Claude backend.</div>
+      <input class="subj" id="set-openaiKey" type="password" placeholder="${s.openaiKeySet ? 'leave blank to keep current key' : 'sk-…'}" />
+      <input class="subj" id="set-openaiModel" value="${esc(s.openaiModel)}" placeholder="gpt-4o" />
+    </div>
+
+    <div class="card">
+      <strong>Local (Ollama)</strong>
+      <div class="muted small" style="margin:4px 0 8px">Free, fully offline. Install from ollama.com, then e.g. <code>ollama pull llama3.1</code>.</div>
+      <input class="subj" id="set-ollamaHost" value="${esc(s.ollamaHost)}" placeholder="http://localhost:11434" />
+      <input class="subj" id="set-ollamaModel" value="${esc(s.ollamaModel)}" placeholder="llama3.1" />
+    </div>
+
+    <div class="actions">
+      <button class="btn primary" onclick="saveSettings()">Save</button>
+      <button class="btn" onclick="testSettings()">Test connection</button>
+      <span id="set-status" class="muted small"></span>
+    </div>`;
+}
+
+function settingsBody() {
+  return {
+    provider: $('#set-provider').value,
+    anthropicKey: $('#set-anthropicKey').value,
+    anthropicModel: $('#set-anthropicModel').value,
+    openaiKey: $('#set-openaiKey').value,
+    openaiModel: $('#set-openaiModel').value,
+    ollamaHost: $('#set-ollamaHost').value,
+    ollamaModel: $('#set-ollamaModel').value,
+  };
+}
+
+window.saveSettings = async () => {
+  $('#set-status').textContent = 'Saving…';
+  try {
+    const r = await api('/api/settings', { method: 'POST', body: settingsBody() });
+    await load();
+    await renderSettings();
+    $('#set-status') && ($('#set-status').textContent = r.live ? `Saved — now on ${r.backend}.` : 'Saved — backend offline (check key/model).');
+    toast('Settings saved. 🐕');
+  } catch (e) { $('#set-status').textContent = 'Error: ' + e.message; }
+};
+
+window.testSettings = async () => {
+  $('#set-status').textContent = 'Testing…';
+  try {
+    const r = await api('/api/settings/test', { method: 'POST', body: settingsBody() });
+    $('#set-status').textContent = (r.ok ? '✅ ' : '❌ ') + r.detail;
+  } catch (e) { $('#set-status').textContent = 'Error: ' + e.message; }
+};
+
 // ── Tabs ─────────────────────────────────────────────────────────────────
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
@@ -471,6 +554,7 @@ function switchTab(name) {
   if (name === 'digest') renderDigest();
   if (name === 'chat') renderChat();
   if (name === 'prospect') renderProspect();
+  if (name === 'settings') renderSettings();
 }
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));
 

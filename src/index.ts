@@ -1,6 +1,6 @@
 import { loadConfig, loadAccounts } from './config.js';
 import { BigDogBrain } from './brain.js';
-import { selectProvider } from './llm/provider.js';
+import { loadSettings, buildProvider } from './settings.js';
 import { createServer } from './server.js';
 import { startScheduler } from './scheduler.js';
 import { startBots } from './bots/index.js';
@@ -10,14 +10,9 @@ async function main() {
   const cfg = loadConfig();
   const accountsCfg = loadAccounts();
 
-  // Pick the LLM backend (Claude or local Ollama) and build the brain.
-  const provider = selectProvider({
-    provider: cfg.provider,
-    anthropicKey: cfg.anthropicKey,
-    model: cfg.model,
-    ollamaHost: cfg.ollamaHost,
-    ollamaModel: cfg.ollamaModel,
-  });
+  // Pick the LLM backend (Claude / ChatGPT / local Ollama) from saved settings,
+  // which fall back to env vars. Switchable later from the in-app Settings screen.
+  const provider = buildProvider(loadSettings(cfg));
   if (provider.ping) await provider.ping();
   const brain = new BigDogBrain(provider, cfg.owner, cfg.calcom?.bookingUrl);
 
