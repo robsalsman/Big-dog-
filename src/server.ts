@@ -10,6 +10,7 @@ import { findProspects, saveProspectAsDeal, activeProvider, findContactEmail, pa
 import { runCampaign } from './campaign.js';
 import { recordSentMessage } from './sentmail.js';
 import { allAccounts, getAccount, fileAccountIds, saveAccount, deleteAccount, testAccount } from './accounts.js';
+import { discoverMailConfig } from './maildiscovery.js';
 import type { Account } from './types.js';
 import { loadSettings, saveSettings, buildProvider, publicSettings, testProvider } from './settings.js';
 import { loadOwner, saveOwner } from './profile.js';
@@ -522,6 +523,18 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       smtp: { host: String(b.smtp.host), port: Number(b.smtp.port || 465), secure: !!b.smtp.secure, user: String(b.smtp.user || b.email), pass: String(b.smtp.pass || b.imap.pass || '') },
     };
   }
+
+  // Autodiscover IMAP/SMTP from just an email (+ password to verify the login).
+  app.post('/api/accounts/discover', async (req, res) => {
+    const email = String(req.body?.email ?? '').trim();
+    const password = req.body?.password ? String(req.body.password) : undefined;
+    if (!email.includes('@')) return res.status(400).json({ error: 'need a full email address' });
+    try {
+      res.json(await discoverMailConfig(email, password));
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
 
   app.post('/api/accounts/test', async (req, res) => {
     const a = readAccount(req.body ?? {});

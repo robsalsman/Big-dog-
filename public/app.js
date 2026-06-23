@@ -770,9 +770,19 @@ async function renderSettings() {
   el.innerHTML += `
     <div class="card" id="mailboxes-card">
       <strong>📬 Mailboxes</strong>
-      <div class="muted small" style="margin:4px 0 8px">Add the mailboxes Big Dog should manage — no JSON editing. Use an App Password for Gmail/Outlook.</div>
+      <div class="muted small" style="margin:4px 0 8px">Just enter your email + password and hit <strong>Auto-detect</strong> — Big Dog finds the servers for you. (Gmail/Outlook need an App Password.)</div>
       <div id="mailbox-list" class="muted small">Loading…</div>
       <div style="margin-top:12px">
+        <input class="subj" id="mb-id" placeholder="short id (e.g. work)" />
+        <input class="subj" id="mb-email" placeholder="you@yourdomain.com" />
+        <input class="subj" id="mb-pass" type="password" placeholder="password / app password" />
+        <div class="actions" style="margin:6px 0">
+          <button class="btn small primary" onclick="autodetectMailbox()">🔍 Auto-detect servers</button>
+          <span id="mb-detect" class="muted small"></span>
+        </div>
+        <details id="mb-advanced" style="margin-top:4px">
+        <summary class="muted small" style="cursor:pointer">Server details (filled in automatically)</summary>
+        <div style="margin-top:8px">
         <label class="small muted">Preset</label>
         <select id="mb-preset" class="subj" style="max-width:220px" onchange="applyPreset()">
           <option value="">Custom…</option>
@@ -781,9 +791,6 @@ async function renderSettings() {
           <option value="ionos">IONOS</option>
           <option value="yahoo">Yahoo</option>
         </select>
-        <input class="subj" id="mb-id" placeholder="short id (e.g. work)" />
-        <input class="subj" id="mb-email" placeholder="you@yourdomain.com" />
-        <input class="subj" id="mb-pass" type="password" placeholder="password / app password" />
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <input class="subj" id="mb-imaphost" placeholder="imap host" style="flex:1" />
           <input class="subj" id="mb-imapport" placeholder="993" style="width:90px" />
@@ -793,7 +800,9 @@ async function renderSettings() {
           <input class="subj" id="mb-smtpport" placeholder="465" style="width:90px" />
           <label class="small muted" style="white-space:nowrap"><input type="checkbox" id="mb-smtpsecure" checked /> SSL</label>
         </div>
-        <div class="actions">
+        </div>
+        </details>
+        <div class="actions" style="margin-top:8px">
           <button class="btn small primary" onclick="saveMailbox()">Add mailbox</button>
           <button class="btn small" onclick="testMailbox()">Test</button>
           <span id="mb-status" class="muted small"></span>
@@ -850,6 +859,33 @@ window.applyPreset = () => {
   $('#mb-imaphost').value = p.imaphost; $('#mb-imapport').value = p.imapport;
   $('#mb-smtphost').value = p.smtphost; $('#mb-smtpport').value = p.smtpport;
   $('#mb-smtpsecure').checked = p.smtpsecure;
+};
+
+window.autodetectMailbox = async () => {
+  const email = $('#mb-email').value.trim();
+  const password = $('#mb-pass').value;
+  const out = $('#mb-detect');
+  if (!email.includes('@')) { out.textContent = 'Enter your email address first.'; return; }
+  out.textContent = password ? '🔍 Detecting + verifying login…' : '🔍 Detecting servers…';
+  try {
+    const r = await api('/api/accounts/discover', { method: 'POST', body: { email, password } });
+    const c = r.config;
+    if (c) {
+      $('#mb-imaphost').value = c.imap.host; $('#mb-imapport').value = c.imap.port;
+      $('#mb-smtphost').value = c.smtp.host; $('#mb-smtpport').value = c.smtp.port;
+      $('#mb-smtpsecure').checked = !!c.smtp.secure;
+      if (!$('#mb-id').value.trim()) $('#mb-id').value = (email.split('@')[1] || 'mail').split('.')[0];
+    }
+    if (r.ok && c && c.verified) {
+      out.innerHTML = `✅ Found & logged in (${esc(c.source)}). IMAP ${esc(c.imap.host)} · SMTP ${esc(c.smtp.host)}. Click <strong>Add mailbox</strong>.`;
+    } else if (c) {
+      $('#mb-advanced').open = true;
+      out.innerHTML = (r.detail ? esc(r.detail) + ' ' : '') + `Best guess filled in (${esc(c.source)}) — hit <strong>Test</strong> to check.`;
+    } else {
+      out.textContent = r.detail || "Couldn't detect the servers. Pick a preset or enter them manually below.";
+      $('#mb-advanced').open = true;
+    }
+  } catch (e) { out.textContent = 'Error: ' + e.message; $('#mb-advanced').open = true; }
 };
 
 async function loadMailboxes() {
