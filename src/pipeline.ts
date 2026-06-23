@@ -4,6 +4,8 @@ import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
 import type { AccountsConfig, Deal, CalendarEvent, Draft } from './types.js';
 import { allAccounts } from './accounts.js';
+import { notifyAll } from './notify.js';
+import { logActivity } from './activity.js';
 
 const NO_REPLY = /no-?reply|do-?not-?reply|notifications?@|mailer-daemon|postmaster|@.*\.(amazonaws|sendgrid|mailchimp)/i;
 
@@ -85,6 +87,13 @@ export async function triageNewMail(
 
     messages.setAnalysis(m.id, analysis.priority, analysis.summary, dealId);
 
+    // Real-time alert when a hot lead lands.
+    if (analysis.priority === 'hot' && m.fromEmail && !NO_REPLY.test(m.fromEmail)) {
+      const line = `🔥 Hot lead — ${m.fromName}: ${analysis.summary || m.subject}`;
+      logActivity('hot', line);
+      void notifyAll(line);
+    }
+
     // Auto-draft: have a reply waiting for any hot/warm thread worth answering.
     if (
       cfg.autoDraft &&
@@ -118,5 +127,6 @@ export async function triageNewMail(
     processed++;
   }
 
+  if (processed > 0) logActivity('triage', `Triaged ${processed} new message(s)`);
   return processed;
 }

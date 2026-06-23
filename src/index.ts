@@ -7,6 +7,7 @@ import { allAccounts } from './accounts.js';
 import { createServer } from './server.js';
 import { startScheduler } from './scheduler.js';
 import { startBots } from './bots/index.js';
+import { setNotifiers } from './notify.js';
 import { seedDemoData } from './seed.js';
 
 async function main() {
@@ -27,6 +28,7 @@ async function main() {
 
   const app = createServer(cfg, accountsCfg, brain);
   const notifiers = await startBots({ cfg, accounts: accountsCfg, brain });
+  setNotifiers(notifiers); // let any flow (hot-lead alerts, cadences) ping the bots
   startScheduler(cfg, accountsCfg, brain, notifiers);
 
   app.listen(cfg.port, () => {

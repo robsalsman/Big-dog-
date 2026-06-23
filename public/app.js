@@ -248,12 +248,45 @@ function renderPipeline() {
       return `<div class="col"><h3>${stage} (${inStage.length})</h3>${cards}</div>`;
     })
     .join('');
+  const open = state.deals.filter((d) => d.stage !== 'won' && d.stage !== 'lost');
+  const value = open.reduce((s, d) => s + (Number(d.value) || 0), 0);
+  const won = state.deals.filter((d) => d.stage === 'won').length;
+  const lost = state.deals.filter((d) => d.stage === 'lost').length;
+  const winRate = won + lost ? Math.round((won / (won + lost)) * 100) : null;
+  const hot = state.messages.filter((m) => m.priority === 'hot').length;
+  const stat = (label, val) => `<div class="card" style="flex:1;min-width:120px;text-align:center;margin:0"><div style="font-size:22px;font-weight:700">${val}</div><div class="muted small">${label}</div></div>`;
+  const strip = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+    ${stat('Open pipeline', money(value))}
+    ${stat('Open deals', open.length)}
+    ${stat('🔥 Hot threads', hot)}
+    ${stat('Win rate', winRate == null ? '—' : winRate + '%')}
+  </div>`;
   el.innerHTML = `
     <div class="row" style="margin-bottom:14px">
       <h2>Pipeline</h2>
       <button class="btn small primary" onclick="runFollowups()">🐕 Run follow-ups</button>
     </div>
+    ${strip}
     <div class="board">${board}</div>`;
+}
+
+// ── Activity ─────────────────────────────────────────────────────────────
+const ACT_ICON = { sync: '🔄', triage: '🧠', hot: '🔥', draft: '✍', send: '📤', schedule: '⏰', cadence: '🔁', campaign: '🚀', error: '⚠️' };
+async function renderActivity() {
+  const el = $('#activity');
+  el.innerHTML = '<div class="row" style="margin-bottom:12px"><h2>Activity</h2><button class="btn small" onclick="renderActivity()">↻ Refresh</button></div><div id="act-list" class="muted">Loading…</div>';
+  try {
+    const { activity } = await api('/api/activity');
+    const list = $('#act-list');
+    if (!list) return;
+    list.innerHTML = activity.length ? activity.map((a) => `
+      <div class="card" style="padding:10px 14px">
+        <div class="row">
+          <div><span style="margin-right:6px">${ACT_ICON[a.type] || '•'}</span>${esc(a.message)}</div>
+          <div class="muted small" style="white-space:nowrap">${fmtDate(a.ts)}</div>
+        </div>
+      </div>`).join('') : '<div class="empty">Nothing yet. Hit “Sync &amp; work the inbox”.</div>';
+  } catch (e) { $('#act-list') && ($('#act-list').innerHTML = 'Error: ' + esc(e.message)); }
 }
 
 window.runFollowups = async () => {
@@ -322,14 +355,29 @@ function renderDrafts() {
       <input class="subj" id="subj-${d.id}" value="${esc(d.subject)}" />
       <textarea class="edit" id="draft-${d.id}">${esc(d.body)}</textarea>
       ${d.rationale ? `<div class="muted small" style="margin-top:6px">🐕 ${esc(d.rationale)}</div>` : ''}
+      ${d.sendAt ? `<div class="small" style="color:var(--accent);margin-top:6px">⏰ scheduled for ${fmtDate(d.sendAt)}</div>` : ''}
       <div class="actions">
         <button class="btn small good" onclick="sendDraft('${d.id}')">Send as me</button>
+        <input type="datetime-local" id="sched-${d.id}" class="subj" style="width:auto;margin:0" />
+        <button class="btn small" onclick="scheduleDraft('${d.id}')">⏰ Schedule</button>
+        ${d.sendAt ? `<button class="btn small ghost" onclick="unschedule('${d.id}')">Unschedule</button>` : ''}
         <button class="btn small ghost" onclick="discardDraft('${d.id}')">Discard</button>
       </div>
     </div>`,
     )
     .join('');
 }
+
+window.scheduleDraft = async (id) => {
+  const v = $('#sched-' + id).value;
+  if (!v) { toast('Pick a date/time first.'); return; }
+  try { await api(`/api/drafts/${id}/schedule`, { method: 'POST', body: { sendAt: v } }); await load(); toast('Scheduled. ⏰'); }
+  catch (e) { toast('Error: ' + e.message); }
+};
+window.unschedule = async (id) => {
+  try { await api(`/api/drafts/${id}/schedule`, { method: 'POST', body: { sendAt: null } }); await load(); toast('Schedule cleared.'); }
+  catch (e) { toast('Error: ' + e.message); }
+};
 
 window.sendDraft = async (id) => {
   const body = $('#draft-' + id).value;
@@ -864,6 +912,7 @@ function switchTab(name) {
   if (name === 'digest') renderDigest();
   if (name === 'chat') renderChat();
   if (name === 'prospect') renderProspect();
+  if (name === 'activity') renderActivity();
   if (name === 'settings') renderSettings();
 }
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));

@@ -2,7 +2,8 @@ import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { messages, deals, events, drafts, memories } from './db.js';
+import { messages, deals, events, drafts, memories, activity } from './db.js';
+import { logActivity } from './activity.js';
 import { runAgent } from './agent/agent.js';
 import { runCadenceSweep } from './cadence.js';
 import { findProspects, saveProspectAsDeal, activeProvider, findContactEmail, parseCsv, enrichRows } from './prospect.js';
@@ -109,6 +110,9 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       const synced = await syncAll(allAccounts());
       const triaged = await triageNewMail(brain, cfg, accountsCfg);
       const bookings = calcomConfigured(cfg) ? await syncCalcomBookings(cfg).catch(() => 0) : 0;
+      const newMail = synced.reduce((n, s) => n + s.added, 0);
+      logActivity('sync', `Synced ${newMail} new message(s)${bookings ? `, ${bookings} booking(s)` : ''}`);
+      for (const s of synced) if (s.error) logActivity('error', `Mailbox ${s.account}: ${s.error}`);
       res.json({ synced, triaged, bookings });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -167,6 +171,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
           recordSentMessage({ accountId: account.id, fromName: account.label, fromEmail: account.email, toEmails: draft.toEmails, subject, body });
         }
       }
+      logActivity('draft', `Drafted reply to ${m.fromName} <${m.fromEmail}>`);
       res.json({ draft, autoSent: cfg.sendMode === 'auto' });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -183,6 +188,21 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     res.json({ messages: messages.thread(req.params.id) });
   });
 
+  // Activity log — what Big Dog has been doing.
+  app.get('/api/activity', (_req, res) => {
+    res.json({ activity: activity.recent(120) });
+  });
+
+  // Schedule a draft to send later (or clear the schedule with sendAt:null).
+  app.post('/api/drafts/:id/schedule', (req, res) => {
+    const draft = drafts.get(req.params.id);
+    if (!draft) return res.status(404).json({ error: 'draft not found' });
+    const sendAt = req.body?.sendAt ? new Date(String(req.body.sendAt)).toISOString() : null;
+    drafts.setSendAt(draft.id, sendAt);
+    logActivity('schedule', sendAt ? `Scheduled email to ${draft.toEmails} for ${sendAt.slice(0, 16).replace('T', ' ')}` : `Cleared schedule for ${draft.toEmails}`);
+    res.json({ ok: true, sendAt });
+  });
+
   // ── Approve / send / discard a draft ────────────────────────────────
   app.post('/api/drafts/:id/send', async (req, res) => {
     const draft = drafts.get(req.params.id);
@@ -194,14 +214,17 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       drafts.setStatus(draft.id, 'sent', new Date().toISOString());
       const from = allAccounts()[0];
       recordSentMessage({ accountId: draft.accountId, fromName: from?.label ?? 'Me', fromEmail: from?.email ?? cfg.owner.signature.split('\n')[0] ?? 'me', toEmails: draft.toEmails, subject, body });
+      logActivity('send', `Marked sent to ${draft.toEmails} (demo — no live account): "${subject}"`);
       return res.json({ ok: true, note: 'No live account for this draft (demo) — marked as sent.' });
     }
     try {
       await sendMail(account, { to: draft.toEmails, subject, body, inReplyTo: draft.inReplyTo });
       drafts.setStatus(draft.id, 'sent', new Date().toISOString());
       recordSentMessage({ accountId: account.id, fromName: account.label, fromEmail: account.email, toEmails: draft.toEmails, subject, body });
+      logActivity('send', `Sent email to ${draft.toEmails}: "${subject}"`);
       res.json({ ok: true });
     } catch (err) {
+      logActivity('error', `Send to ${draft.toEmails} failed: ${(err as Error).message}`);
       res.status(500).json({ error: (err as Error).message });
     }
   });

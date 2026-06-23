@@ -93,6 +93,7 @@ export interface Draft {
   status: 'pending' | 'sent' | 'discarded';
   createdAt: string;
   sentAt: string | null;
+  sendAt?: string | null; // schedule a send for later
 }
 
 export interface Digest {

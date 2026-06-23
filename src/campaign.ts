@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { drafts, memories } from './db.js';
 import { enrichRows, saveProspectAsDeal } from './prospect.js';
+import { logActivity } from './activity.js';
 import type { BigDogBrain } from './brain.js';
 import type { Draft } from './types.js';
 
@@ -98,5 +99,6 @@ export async function runCampaign(
 
   result.summary.researched = researched;
   result.summary.drafted = drafted;
+  logActivity('campaign', `Campaign: ${result.summary.withEmail} email(s) found, ${result.summary.added} added, ${drafted} intro(s) drafted`);
   return result;
 }

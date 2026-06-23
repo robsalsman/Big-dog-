@@ -4,6 +4,7 @@ import { generateDigest } from './digest.js';
 import { calcomConfigured, syncCalcomBookings } from './calcom.js';
 import { runCadenceSweep } from './cadence.js';
 import { allAccounts } from './accounts.js';
+import { sendDueDrafts } from './scheduledsend.js';
 import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
 import type { AccountsConfig } from './types.js';
@@ -43,9 +44,10 @@ export function startScheduler(
     console.log(`[big-dog] auto-sync every ${cfg.syncMinutes} min`);
   }
 
-  // Daily digest at the configured hour, pushed to chat bots.
+  // Every minute: fire any scheduled sends; once a day fire the digest + cadence.
   let lastDigestDay = '';
   setInterval(async () => {
+    await sendDueDrafts().catch(() => {});
     const now = new Date();
     const today = now.toISOString().slice(0, 10);
     if (now.getHours() === cfg.digestHour && lastDigestDay !== today) {

@@ -3,6 +3,7 @@ import { deals, drafts, memories } from './db.js';
 import type { AgentContext } from './agent/tools.js';
 import type { Draft } from './types.js';
 import { allAccounts } from './accounts.js';
+import { logActivity } from './activity.js';
 
 /**
  * The follow-up cadence engine. Sweeps open deals and, for any that have gone
@@ -49,5 +50,6 @@ export async function runCadenceSweep(ctx: AgentContext): Promise<string[]> {
     created.push(`${d.title} — ${reason}`);
   }
 
+  if (created.length) logActivity('cadence', `Queued ${created.length} follow-up(s) for stalled deals`);
   return created;
 }

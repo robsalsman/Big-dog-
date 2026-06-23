@@ -78,7 +78,15 @@ db.exec(`
     rationale TEXT,
     status TEXT DEFAULT 'pending',
     createdAt TEXT,
-    sentAt TEXT
+    sentAt TEXT,
+    sendAt TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS activity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT,
+    type TEXT,
+    message TEXT
   );
 
   CREATE TABLE IF NOT EXISTS digests (
@@ -119,6 +127,12 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_messages_deal ON messages(dealId);
   CREATE INDEX IF NOT EXISTS idx_events_start ON events(start);
 `);
+
+// Migration: add drafts.sendAt to pre-existing databases.
+{
+  const cols = db.prepare('PRAGMA table_info(drafts)').all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'sendAt')) db.exec('ALTER TABLE drafts ADD COLUMN sendAt TEXT');
+}
 
 // ── Messages ────────────────────────────────────────────────────────────
 export const messages = {
@@ -241,9 +255,17 @@ export const events = {
 export const drafts = {
   insert(d: Draft) {
     db.prepare(
-      `INSERT INTO drafts (id, accountId, inReplyTo, dealId, toEmails, subject, body, rationale, status, createdAt, sentAt)
-       VALUES (@id, @accountId, @inReplyTo, @dealId, @toEmails, @subject, @body, @rationale, @status, @createdAt, @sentAt)`,
-    ).run(d);
+      `INSERT INTO drafts (id, accountId, inReplyTo, dealId, toEmails, subject, body, rationale, status, createdAt, sentAt, sendAt)
+       VALUES (@id, @accountId, @inReplyTo, @dealId, @toEmails, @subject, @body, @rationale, @status, @createdAt, @sentAt, @sendAt)`,
+    ).run({ ...d, sendAt: d.sendAt ?? null });
+  },
+  setSendAt(id: string, sendAt: string | null) {
+    db.prepare('UPDATE drafts SET sendAt = ? WHERE id = ?').run(sendAt, id);
+  },
+  due(nowIso: string): Draft[] {
+    return db
+      .prepare("SELECT * FROM drafts WHERE status = 'pending' AND sendAt IS NOT NULL AND sendAt <= ?")
+      .all(nowIso) as Draft[];
   },
   get(id: string): Draft | undefined {
     return db.prepare('SELECT * FROM drafts WHERE id = ?').get(id) as Draft | undefined;
@@ -344,6 +366,22 @@ export const settingsStore = {
     const out: Record<string, string> = {};
     for (const r of rows) out[r.key] = r.value;
     return out;
+  },
+};
+
+// ── Activity log (what Big Dog did) ──────────────────────────────────────
+export interface ActivityEntry {
+  ts: string;
+  type: string;
+  message: string;
+}
+export const activity = {
+  add(type: string, message: string) {
+    db.prepare('INSERT INTO activity (ts, type, message) VALUES (?, ?, ?)').run(new Date().toISOString(), type, message);
+    db.prepare('DELETE FROM activity WHERE id NOT IN (SELECT id FROM activity ORDER BY id DESC LIMIT 500)').run();
+  },
+  recent(limit = 100): ActivityEntry[] {
+    return db.prepare('SELECT ts, type, message FROM activity ORDER BY id DESC LIMIT ?').all(limit) as ActivityEntry[];
   },
 };
 
