@@ -1,0 +1,6 @@
+# Caddy gives Big Dog automatic HTTPS (free Let's Encrypt certs, auto-renewed)
+# and reverse-proxies to the app. Change the hostname if you use a different one.
+bigdog.builda.company {
+	reverse_proxy bigdog:4137
+	encode zstd gzip
+}

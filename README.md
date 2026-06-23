@@ -111,6 +111,9 @@ Without a brain configured it still runs end-to-end using simple fallbacks. Add 
 Claude key **or** point it at a local Ollama model to get the real "clone of you"
 intelligence.
 
+**Deploy it on your own domain** (e.g. `bigdog.builda.company`) with one command
+and automatic HTTPS — see **[DEPLOY.md](DEPLOY.md)** (Docker + Caddy on any VPS).
+
 ---
 
 ## Choose your AI (no config files)

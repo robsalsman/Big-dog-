@@ -33,8 +33,12 @@ const PUBLIC_DIR = resolve(here, '..', 'public');
 
 export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain: BigDogBrain) {
   const app = express();
+  app.set('trust proxy', 1); // behind a TLS reverse proxy (Caddy/nginx) in production
   app.use(express.json({ limit: '2mb' }));
   app.use(express.static(PUBLIC_DIR));
+
+  // Health check for proxies / uptime monitors (unauthenticated).
+  app.get('/healthz', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
   // Parse cookies for auth.
   app.use((req, _res, next) => {
@@ -42,8 +46,10 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     next();
   });
   const cookieOf = (req: express.Request) => (req as unknown as { cookies: Record<string, string> }).cookies?.[COOKIE];
-  const setSession = (res: express.Response, token: string, maxAgeSec: number) =>
-    res.setHeader('Set-Cookie', `${COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAgeSec}`);
+  const setSession = (req: express.Request, res: express.Response, token: string, maxAgeSec: number) => {
+    const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    res.setHeader('Set-Cookie', `${COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAgeSec}${secure ? '; Secure' : ''}`);
+  };
 
   // ── Auth (unguarded) ────────────────────────────────────────────────
   app.get('/api/auth/status', (req, res) => {
@@ -51,13 +57,13 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   });
   app.post('/api/auth/login', (req, res) => {
     if (!isAuthConfigured() || verifyPassword(String(req.body?.password ?? ''))) {
-      setSession(res, issueToken(), 30 * 86_400);
+      setSession(req, res, issueToken(), 30 * 86_400);
       return res.json({ ok: true });
     }
     res.status(401).json({ error: 'wrong password' });
   });
-  app.post('/api/auth/logout', (_req, res) => {
-    setSession(res, '', 0);
+  app.post('/api/auth/logout', (req, res) => {
+    setSession(req, res, '', 0);
     res.json({ ok: true });
   });
   app.post('/api/auth/password', (req, res) => {
@@ -69,7 +75,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       if (!ok) return res.status(401).json({ error: 'current password or login required' });
     }
     setPassword(next);
-    setSession(res, issueToken(), 30 * 86_400);
+    setSession(req, res, issueToken(), 30 * 86_400);
     res.json({ ok: true });
   });
 

@@ -1,0 +1,45 @@
+# One-command deploy for Big Dog at bigdog.builda.company with automatic HTTPS.
+#   docker compose up -d --build
+#
+# - `bigdog`  runs the app (port 4137, internal only).
+# - `caddy`   terminates TLS on 80/443 and reverse-proxies to bigdog.
+#
+# Persists across restarts: ./data (mail cache, deals, calendar SQLite),
+# ./config (your accounts.json), and Caddy's certificates.
+services:
+  bigdog:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - PORT=4137
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+    expose:
+      - "4137"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4137/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - bigdog
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
