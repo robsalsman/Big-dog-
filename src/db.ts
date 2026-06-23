@@ -152,7 +152,11 @@ export const messages = {
     return db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as Message | undefined;
   },
   recent(limit = 100): Message[] {
-    return db.prepare('SELECT * FROM messages ORDER BY date DESC LIMIT ?').all(limit) as Message[];
+    // The main feed is received mail; sent mail still appears inside threads.
+    return db.prepare("SELECT * FROM messages WHERE folder IS NULL OR folder != 'SENT' ORDER BY date DESC LIMIT ?").all(limit) as Message[];
+  },
+  recentSent(limit = 100): Message[] {
+    return db.prepare("SELECT * FROM messages WHERE folder = 'SENT' ORDER BY date DESC LIMIT ?").all(limit) as Message[];
   },
   thread(threadId: string): Message[] {
     return db.prepare('SELECT * FROM messages WHERE threadId = ? ORDER BY date ASC').all(threadId) as Message[];

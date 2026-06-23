@@ -57,7 +57,14 @@ const HEADER_MAP: Record<string, string> = {
 
 /** Minimal RFC-ish CSV parser (handles quotes, commas, escaped quotes). */
 export function parseCsv(text: string): Record<string, string>[] {
-  const rows: string[][] = [];
+  const { headers, rows } = parseCsvRaw(text);
+  if (!rows.length) return [];
+  return applyMap(rows, deterministicMap(headers));
+}
+
+/** Low-level CSV parse — keeps the original header names, one object per row. */
+export function parseCsvRaw(text: string): { headers: string[]; rows: Record<string, string>[] } {
+  const grid: string[][] = [];
   let row: string[] = [];
   let field = '';
   let inQuotes = false;
@@ -70,19 +77,71 @@ export function parseCsv(text: string): Record<string, string>[] {
       } else field += c;
     } else if (c === '"') inQuotes = true;
     else if (c === ',') { row.push(field); field = ''; }
-    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else if (c === '\n') { row.push(field); grid.push(row); row = []; field = ''; }
     else field += c;
   }
-  if (field !== '' || row.length) { row.push(field); rows.push(row); }
-  const nonEmpty = rows.filter((r) => r.some((v) => v.trim() !== ''));
-  if (nonEmpty.length < 2) return [];
-
-  const headers = nonEmpty[0]!.map((h) => HEADER_MAP[h.trim().toLowerCase()] ?? h.trim().toLowerCase());
-  return nonEmpty.slice(1).map((r) => {
+  if (field !== '' || row.length) { row.push(field); grid.push(row); }
+  const nonEmpty = grid.filter((r) => r.some((v) => v.trim() !== ''));
+  if (nonEmpty.length < 2) return { headers: [], rows: [] };
+  const headers = nonEmpty[0]!.map((h) => h.trim());
+  const rows = nonEmpty.slice(1).map((r) => {
     const obj: Record<string, string> = {};
     headers.forEach((h, i) => (obj[h] = (r[i] ?? '').trim()));
     return obj;
   });
+  return { headers, rows };
+}
+
+function deterministicMap(headers: string[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const h of headers) {
+    const c = HEADER_MAP[h.trim().toLowerCase()];
+    if (c) map[h] = c;
+  }
+  return map;
+}
+
+function applyMap(rows: Record<string, string>[], map: Record<string, string>): Record<string, string>[] {
+  return rows.map((r) => {
+    const o: Record<string, string> = {};
+    for (const [h, v] of Object.entries(r)) {
+      const c = map[h];
+      if (c && v) o[c] = v;
+    }
+    return o;
+  });
+}
+
+const CANON_FIELDS = ['name', 'first', 'last', 'company', 'domain', 'website', 'title', 'email', 'linkedin'];
+
+/**
+ * Normalize an arbitrary CSV export into canonical lead rows. It maps the obvious
+ * headers itself and — when a model is live — asks Claude to map the leftover
+ * columns by reading the header names + a few sample values, so messy CRM/Pardot
+ * exports with dozens of columns just work. Returns the rows + the mapping used.
+ */
+export async function normalizeCsv(
+  text: string,
+  brain?: BigDogBrain,
+): Promise<{ rows: Record<string, string>[]; mapping: Record<string, string>; headers: string[] }> {
+  const { headers, rows } = parseCsvRaw(text);
+  if (!rows.length) return { rows: [], mapping: {}, headers: [] };
+  const map = deterministicMap(headers);
+
+  // If we're still missing essentials (a name, or any way to reach them), let
+  // the model interpret the columns we didn't recognize.
+  const have = new Set(Object.values(map));
+  const lacksName = !have.has('name') && !(have.has('first') && have.has('last'));
+  const lacksReach = !have.has('email') && !have.has('domain') && !have.has('website') && !have.has('company');
+  const unmapped = headers.filter((h) => !map[h]);
+  if (brain?.live && unmapped.length && (lacksName || lacksReach)) {
+    const samples = unmapped.map((h) => ({ header: h, values: rows.map((r) => r[h] ?? '').filter(Boolean).slice(0, 3) }));
+    const llm = await brain.mapCsvColumns(unmapped, samples).catch(() => ({} as Record<string, string>));
+    for (const [h, c] of Object.entries(llm)) {
+      if (CANON_FIELDS.includes(c) && headers.includes(h) && !map[h]) map[h] = c;
+    }
+  }
+  return { rows: applyMap(rows, map), mapping: map, headers };
 }
 
 export interface EnrichedRow {

@@ -70,6 +70,37 @@ export class BigDogBrain {
     return this.provider.label;
   }
 
+  /** Can this backend do live web research / prospecting (Claude with web access)? */
+  get webCapable(): boolean {
+    return !!this.provider.webResearch;
+  }
+
+  /**
+   * Map arbitrary spreadsheet headers to canonical lead fields by reading the
+   * header names + sample values. Returns { "Original Header": "canonical" }.
+   */
+  async mapCsvColumns(headers: string[], samples: { header: string; values: string[] }[]): Promise<Record<string, string>> {
+    if (!this.provider.live) return {};
+    const list = samples
+      .map((s) => `- "${s.header}": ${s.values.length ? s.values.slice(0, 3).map((v) => JSON.stringify(v)).join(', ') : '(empty)'}`)
+      .join('\n');
+    const user =
+      `Map these spreadsheet columns to canonical lead fields. Canonical fields: ` +
+      `name, first, last, company, domain, website, title, email, linkedin.\n` +
+      `Return ONLY a JSON object mapping the ORIGINAL header to its canonical field. ` +
+      `Only include columns that clearly match a canonical field; omit ids, dates, phone, address, scores, notes, etc.\n\n` +
+      `Columns (with sample values):\n${list}`;
+    try {
+      const out = await this.raw(user, { type: 'object', additionalProperties: { type: 'string' } }, 500);
+      const o = JSON.parse(extractJson(out)) as Record<string, unknown>;
+      const clean: Record<string, string> = {};
+      for (const [h, c] of Object.entries(o)) if (typeof c === 'string') clean[h] = c.toLowerCase().trim();
+      return clean;
+    } catch {
+      return {};
+    }
+  }
+
   /** Swap the LLM backend at runtime (from the in-app Settings screen). */
   setProvider(provider: LLMProvider): void {
     this.provider = provider;
@@ -83,20 +114,41 @@ export class BigDogBrain {
   /** Find prospects from public web data (only when the backend has web access). */
   async prospect(criteria: string): Promise<Prospect[]> {
     if (!this.provider.webProspect) return [];
+    const out = await this.provider.webProspect(criteria).catch(() => '');
+    if (!out) return [];
+
+    const toProspects = (arr: Partial<Prospect>[]): Prospect[] =>
+      arr
+        .filter((p) => p && (p.name || p.company))
+        .map((p) => ({
+          name: String(p.name ?? ''),
+          title: String(p.title ?? ''),
+          company: String(p.company ?? ''),
+          domain: String(p.domain ?? ''),
+          email: String(p.email ?? ''),
+          linkedin: String(p.linkedin ?? ''),
+          location: String(p.location ?? ''),
+          source: 'web',
+          notes: String(p.notes ?? ''),
+        }));
+
+    // First try: the model already returned a JSON array.
     try {
-      const out = await this.provider.webProspect(criteria);
-      const arr = JSON.parse(extractJsonArray(out)) as Partial<Prospect>[];
-      return arr.map((p) => ({
-        name: String(p.name ?? ''),
-        title: String(p.title ?? ''),
-        company: String(p.company ?? ''),
-        domain: String(p.domain ?? ''),
-        email: String(p.email ?? ''),
-        linkedin: String(p.linkedin ?? ''),
-        location: String(p.location ?? ''),
-        source: 'web',
-        notes: String(p.notes ?? ''),
-      }));
+      return toProspects(JSON.parse(extractJsonArray(out)) as Partial<Prospect>[]);
+    } catch {
+      /* fall through to repair */
+    }
+
+    // Repair: the web answer came back as prose — have the model structure it.
+    try {
+      const fixed = await this.raw(
+        `Convert the findings below into ONLY a JSON array of objects with keys ` +
+          `name, title, company, domain, email, linkedin, location, notes. ` +
+          `Include every distinct person or company mentioned. Use "" for unknown fields; never invent emails.\n\nFINDINGS:\n${out.slice(0, 6000)}`,
+        { type: 'array', items: { type: 'object', additionalProperties: true } },
+        2000,
+      );
+      return toProspects(JSON.parse(extractJsonArray(fixed)) as Partial<Prospect>[]);
     } catch {
       return [];
     }

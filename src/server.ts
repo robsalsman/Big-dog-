@@ -6,7 +6,7 @@ import { messages, deals, events, drafts, memories, activity } from './db.js';
 import { logActivity } from './activity.js';
 import { runAgent } from './agent/agent.js';
 import { runCadenceSweep } from './cadence.js';
-import { findProspects, saveProspectAsDeal, activeProvider, findContactEmail, parseCsv, enrichRows } from './prospect.js';
+import { findProspects, saveProspectAsDeal, activeProvider, findContactEmail, normalizeCsv, enrichRows } from './prospect.js';
 import { runCampaign } from './campaign.js';
 import { recordSentMessage } from './sentmail.js';
 import { allAccounts, getAccount, fileAccountIds, saveAccount, deleteAccount, testAccount } from './accounts.js';
@@ -36,7 +36,7 @@ const PUBLIC_DIR = resolve(here, '..', 'public');
 export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain: BigDogBrain) {
   const app = express();
   app.set('trust proxy', 1); // behind a TLS reverse proxy (Caddy/nginx) in production
-  app.use(express.json({ limit: '2mb' }));
+  app.use(express.json({ limit: '25mb' }));
   app.use(express.static(PUBLIC_DIR));
 
   // Health check for proxies / uptime monitors (unauthenticated).
@@ -392,7 +392,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     if (!criteria.trim()) return res.status(400).json({ error: 'describe who to find' });
     try {
       const prospects = await findProspects(criteria, cfg, brain);
-      res.json({ provider: activeProvider(cfg), prospects });
+      res.json({ provider: activeProvider(cfg), prospects, brainLive: brain.live, webCapable: brain.webCapable, backend: brain.backend });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -406,11 +406,11 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
 
   // Bulk: import a CSV lead list and fill in each contact's email.
   app.post('/api/prospect/enrich', async (req, res) => {
-    const rows = req.body?.csv ? parseCsv(String(req.body.csv)) : (req.body?.rows as Record<string, string>[]) ?? [];
-    if (!rows.length) return res.status(400).json({ error: 'no rows — paste a CSV with a header row (name/company/domain/…)' });
     try {
+      const norm = req.body?.csv ? await normalizeCsv(String(req.body.csv), brain) : { rows: (req.body?.rows as Record<string, string>[]) ?? [], mapping: {}, headers: [] };
+      if (!norm.rows.length) return res.status(400).json({ error: 'no rows — paste a CSV with a header row (name/company/domain/…)' });
       const verify = !!req.body?.verify;
-      const enriched = await enrichRows(rows, brain, { verify });
+      const enriched = await enrichRows(norm.rows, brain, { verify });
       if (req.body?.save) {
         for (const r of enriched) {
           if (r.email && r.confidence !== 'skipped') {
@@ -418,7 +418,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
           }
         }
       }
-      res.json({ count: enriched.length, rows: enriched });
+      res.json({ count: enriched.length, rows: enriched, mapping: norm.mapping });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -426,9 +426,10 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
 
   // The campaign play: enrich a list → (research top N) → draft intros to all.
   app.post('/api/campaign/run', async (req, res) => {
-    const rows = req.body?.csv ? parseCsv(String(req.body.csv)) : (req.body?.rows as Record<string, string>[]) ?? [];
-    if (!rows.length) return res.status(400).json({ error: 'no rows — paste a CSV with a header row' });
     try {
+      const norm = req.body?.csv ? await normalizeCsv(String(req.body.csv), brain) : { rows: (req.body?.rows as Record<string, string>[]) ?? [] };
+      const rows = norm.rows;
+      if (!rows.length) return res.status(400).json({ error: 'no rows — paste a CSV with a header row' });
       const accountId = allAccounts()[0]?.id ?? 'demo';
       const result = await runCampaign(rows, brain, accountId, {
         verify: !!req.body?.verify,

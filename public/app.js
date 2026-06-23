@@ -502,7 +502,7 @@ function renderProspect() {
     </div>
     <div class="muted small" style="margin-bottom:12px">
       Describe your ideal customer — title, industry, company stage, location, or a domain.
-      ${prov.name === 'web' ? 'Using free web research (public data — verify before outreach). Add an APOLLO_API_KEY for structured B2B search.' : 'Using Apollo.io structured search.'}
+      ${prov.name === 'web' ? 'Big Dog uses Claude\'s live web research to find real prospects from public data (verify before outreach). Give it 20–40s.' : 'Using Apollo.io structured search.'}
     </div>
     <div class="chat-input">
       <input id="prospect-q" placeholder="e.g. Heads of RevOps at Series B SaaS in the US" />
@@ -581,9 +581,12 @@ window.enrichCsv = async (save) => {
         <td class="muted small">${esc(x.method)}</td></tr>`;
     }).join('');
     const filled = r.rows.filter((x) => x.email && x.confidence !== 'skipped').length;
+    const map = r.mapping || {};
+    const mapStr = Object.keys(map).length ? Object.entries(map).map(([h, c]) => `${esc(h)}→${esc(c)}`).join(', ') : '';
     out.innerHTML = `
       <div class="small" style="margin-bottom:8px">Enriched <strong>${filled}/${r.count}</strong> rows${save ? ' · added to pipeline' : ''}.
         <button class="btn small" onclick="downloadCsv()">⬇ Download CSV</button></div>
+      ${mapStr ? `<div class="muted small" style="margin-bottom:8px">🧠 Columns understood: ${mapStr}</div>` : ''}
       <div style="overflow:auto"><table style="width:100%;border-collapse:collapse" class="small">
         <tr class="muted"><th align="left">Name</th><th align="left">Company</th><th align="left">Email</th><th align="left">Conf.</th><th align="left">How</th></tr>
         ${rows}</table></div>`;
@@ -634,10 +637,17 @@ window.findLeads = async () => {
   const q = $('#prospect-q').value.trim();
   if (!q) return;
   const out = $('#prospect-out');
-  out.innerHTML = '<div class="muted">🐕 Hunting…</div>';
+  out.innerHTML = '<div class="muted">🐕 Hunting the web with Claude… (this can take 20–40s)</div>';
   try {
-    const { prospects } = await api('/api/prospect/find', { method: 'POST', body: { criteria: q } });
-    if (!prospects.length) { out.innerHTML = '<div class="empty">No leads found. Try a broader brief, or add an APOLLO_API_KEY.</div>'; return; }
+    const r = await api('/api/prospect/find', { method: 'POST', body: { criteria: q } });
+    const prospects = r.prospects || [];
+    if (!prospects.length) {
+      let msg;
+      if (!r.brainLive) msg = '⚠ Claude isn\'t connected. Add your Anthropic API key in ⚙ Settings → Backend to enable lead-gen.';
+      else if (!r.webCapable) msg = `⚠ Lead-gen needs the Claude backend (web access). Current backend: ${esc(r.backend || 'unknown')}. Switch to Claude in ⚙ Settings.`;
+      else msg = 'No matches this time — try a broader or differently-worded brief (e.g. add a region or industry).';
+      out.innerHTML = `<div class="empty">${msg}</div>`; return;
+    }
     out.innerHTML = prospects.map((p, i) => `
       <div class="card">
         <div class="row">
