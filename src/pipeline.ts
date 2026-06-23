@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { messages, deals, events, memories, drafts } from './db.js';
+import { messages, deals, events, memories, drafts, suppressed } from './db.js';
 import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
 import type { AccountsConfig, Deal, CalendarEvent, Draft } from './types.js';
@@ -100,6 +100,7 @@ export async function triageNewMail(
       (analysis.priority === 'hot' || analysis.priority === 'warm') &&
       m.fromEmail &&
       !NO_REPLY.test(m.fromEmail) &&
+      !suppressed.has(m.fromEmail) &&
       !drafts.existsForMessage(m.messageId)
     ) {
       try {

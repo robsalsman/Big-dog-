@@ -76,6 +76,48 @@ export class BigDogBrain {
   }
 
   /**
+   * Compose (or rewrite) a brand-new email in the owner's voice from a plain
+   * instruction. Used by the Compose box's "AI help". Returns subject + body.
+   */
+  async composeEmail(input: {
+    to?: string;
+    subject?: string;
+    instruction: string;
+    draft?: string;
+    memory?: string;
+  }): Promise<{ subject: string; body: string }> {
+    const fallback = {
+      subject: input.subject || 'Quick note',
+      body: input.draft || `${input.instruction}\n\n${this.owner.signature}`,
+    };
+    if (!this.provider.live) return fallback;
+    const schema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: { subject: { type: 'string' }, body: { type: 'string' } },
+      required: ['subject', 'body'],
+    };
+    try {
+      const out = await this.raw(
+        `Write a complete email in MY voice (use the persona/voice rules in your system prompt). ` +
+          `Sign it as me. Plain text, ready to send — no placeholders, no "[your name]".\n\n` +
+          (input.to ? `Recipient: ${input.to}\n` : '') +
+          (input.subject ? `Intended subject: ${input.subject}\n` : '') +
+          (input.draft ? `Improve/rewrite this draft:\n"""${input.draft}"""\n` : '') +
+          (input.memory ? `What I know about them: ${input.memory}\n` : '') +
+          `\nWhat I want to say / goal: ${input.instruction}\n\n` +
+          `Return JSON {"subject","body"}.`,
+        schema,
+        1200,
+      );
+      const o = JSON.parse(extractJson(out)) as { subject?: string; body?: string };
+      return { subject: o.subject || fallback.subject, body: o.body || fallback.body };
+    } catch {
+      return fallback;
+    }
+  }
+
+  /**
    * Map arbitrary spreadsheet headers to canonical lead fields by reading the
    * header names + sample values. Returns { "Original Header": "canonical" }.
    */

@@ -123,6 +123,11 @@ db.exec(`
     json TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS suppressed (
+    email TEXT PRIMARY KEY,
+    ts TEXT
+  );
+
   CREATE INDEX IF NOT EXISTS idx_messages_date ON messages(date DESC);
   CREATE INDEX IF NOT EXISTS idx_messages_deal ON messages(dealId);
   CREATE INDEX IF NOT EXISTS idx_events_start ON events(start);
@@ -289,8 +294,32 @@ export const drafts = {
       .prepare("SELECT 1 FROM drafts WHERE inReplyTo = ? AND status IN ('pending','sent')")
       .get(inReplyTo);
   },
+  forMessage(inReplyTo: string): Draft | undefined {
+    return db
+      .prepare("SELECT * FROM drafts WHERE inReplyTo = ? AND status = 'pending' ORDER BY createdAt DESC LIMIT 1")
+      .get(inReplyTo) as Draft | undefined;
+  },
   setStatus(id: string, status: Draft['status'], sentAt: string | null = null) {
     db.prepare('UPDATE drafts SET status = ?, sentAt = ? WHERE id = ?').run(status, sentAt, id);
+  },
+};
+
+// ── Suppressed senders (do-not-draft list) ───────────────────────────────
+export const suppressed = {
+  add(email: string) {
+    db.prepare('INSERT INTO suppressed (email, ts) VALUES (?, ?) ON CONFLICT(email) DO NOTHING').run(
+      email.toLowerCase().trim(),
+      new Date().toISOString(),
+    );
+  },
+  remove(email: string) {
+    db.prepare('DELETE FROM suppressed WHERE email = ?').run(email.toLowerCase().trim());
+  },
+  has(email: string): boolean {
+    return !!db.prepare('SELECT 1 FROM suppressed WHERE email = ?').get((email || '').toLowerCase().trim());
+  },
+  all(): string[] {
+    return (db.prepare('SELECT email FROM suppressed ORDER BY ts DESC').all() as { email: string }[]).map((r) => r.email);
   },
 };
 

@@ -2,7 +2,7 @@ import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { messages, deals, events, drafts, memories, activity } from './db.js';
+import { messages, deals, events, drafts, memories, activity, suppressed } from './db.js';
 import { logActivity } from './activity.js';
 import { runAgent } from './agent/agent.js';
 import { runCadenceSweep } from './cadence.js';
@@ -27,7 +27,7 @@ import { calcomConfigured, syncCalcomBookings } from './calcom.js';
 import { browserConfigured, browserReady } from './browser.js';
 import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
-import type { AccountsConfig, DealStage, Draft } from './types.js';
+import type { AccountsConfig, DealStage, Draft, CalendarEvent } from './types.js';
 import { DEAL_STAGES } from './types.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -241,6 +241,121 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   app.post('/api/drafts/:id/discard', (req, res) => {
     drafts.setStatus(req.params.id, 'discarded');
     res.json({ ok: true });
+  });
+
+  // Dismiss the auto-draft attached to a given inbox message (declutter).
+  app.post('/api/messages/:id/dismiss-draft', (req, res) => {
+    const m = messages.get(req.params.id);
+    if (!m) return res.status(404).json({ error: 'message not found' });
+    const d = drafts.forMessage(m.messageId);
+    if (d) drafts.setStatus(d.id, 'discarded');
+    res.json({ ok: true, dismissed: !!d });
+  });
+
+  // ── Do-not-draft sender list ────────────────────────────────────────
+  app.get('/api/suppressed', (_req, res) => res.json({ emails: suppressed.all() }));
+  app.post('/api/suppressed', (req, res) => {
+    const email = String(req.body?.email ?? '').trim().toLowerCase();
+    if (!email.includes('@')) return res.status(400).json({ error: 'need a valid email' });
+    suppressed.add(email);
+    // Also clear any pending drafts already queued for this sender.
+    for (const d of drafts.pending()) if (d.toEmails.toLowerCase().includes(email)) drafts.setStatus(d.id, 'discarded');
+    logActivity('suppress', `Won't auto-draft replies to ${email}`);
+    res.json({ ok: true, emails: suppressed.all() });
+  });
+  app.delete('/api/suppressed/:email', (req, res) => {
+    suppressed.remove(req.params.email);
+    res.json({ ok: true, emails: suppressed.all() });
+  });
+
+  // ── Compose a brand-new email (with AI help) ────────────────────────
+  app.post('/api/compose', async (req, res) => {
+    const instruction = String(req.body?.instruction ?? '').trim();
+    if (!instruction) return res.status(400).json({ error: 'tell Big Dog what you want to say' });
+    const to = String(req.body?.to ?? '').trim();
+    try {
+      const r = await brain.composeEmail({ to, subject: req.body?.subject, draft: req.body?.body, instruction, memory: to ? memories.recall(to) : '' });
+      res.json(r);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Send (or queue) a composed email that isn't a reply.
+  app.post('/api/compose/send', async (req, res) => {
+    const to = String(req.body?.to ?? '').trim();
+    const subject = String(req.body?.subject ?? '(no subject)');
+    const body = String(req.body?.body ?? '');
+    if (!to.includes('@') || !body.trim()) return res.status(400).json({ error: 'need a recipient and a body' });
+    const accountId = String(req.body?.accountId || allAccounts()[0]?.id || '');
+    const account = accountById(accountId);
+    const queue = !!req.body?.queue || !account;
+    if (queue) {
+      const draft: Draft = {
+        id: randomUUID().slice(0, 16), accountId: accountId || 'demo', inReplyTo: null, dealId: null,
+        toEmails: to, subject, body, rationale: 'Composed by you.', status: 'pending', createdAt: new Date().toISOString(), sentAt: null,
+      };
+      drafts.insert(draft);
+      return res.json({ ok: true, queued: true, draftId: draft.id });
+    }
+    try {
+      await sendMail(account!, { to, subject, body });
+      recordSentMessage({ accountId: account!.id, fromName: account!.label, fromEmail: account!.email, toEmails: to, subject, body });
+      logActivity('send', `Sent email to ${to}: "${subject}"`);
+      res.json({ ok: true, sent: true });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Create a meeting invite: calendar event + a (queued) invite email.
+  app.post('/api/meeting/invite', async (req, res) => {
+    const to = String(req.body?.to ?? '').trim();
+    if (!to.includes('@')) return res.status(400).json({ error: 'need an attendee email' });
+    const title = String(req.body?.title ?? 'Meeting');
+    const minutes = Number(req.body?.minutes ?? 30);
+    const start = req.body?.whenISO ? new Date(String(req.body.whenISO)) : new Date(Date.now() + 86_400_000);
+    const end = new Date(start.getTime() + minutes * 60_000);
+    const evt: CalendarEvent = {
+      id: randomUUID().slice(0, 16), title, start: start.toISOString(), end: end.toISOString(),
+      location: cfg.calcom?.bookingUrl || 'Video call', attendees: to, notes: 'Created from Big Dog compose.', dealId: null, source: 'big-dog',
+    };
+    events.upsert(evt);
+    const when = start.toISOString().slice(0, 16).replace('T', ' ');
+    const booking = cfg.calcom?.bookingUrl ? ` Include this booking link: ${cfg.calcom.bookingUrl}.` : '';
+    let subject = `Invite: ${title}`;
+    let body = `Hi,\n\nProposing ${title} on ${when} for ${minutes} minutes.${cfg.calcom?.bookingUrl ? `\n\nBook/confirm here: ${cfg.calcom.bookingUrl}` : ''}\n\n${cfg.owner.signature}`;
+    if (brain.live) {
+      try {
+        const c = await brain.composeEmail({ to, subject, instruction: `Write a short, friendly meeting invite for "${title}" on ${when} (${minutes} minutes).${booking}` });
+        subject = c.subject; body = c.body;
+      } catch { /* keep template */ }
+    }
+    const draft: Draft = {
+      id: randomUUID().slice(0, 16), accountId: allAccounts()[0]?.id ?? 'demo', inReplyTo: null, dealId: null,
+      toEmails: to, subject, body, rationale: 'Meeting invite — queued for your approval.', status: 'pending', createdAt: new Date().toISOString(), sentAt: null,
+    };
+    drafts.insert(draft);
+    logActivity('calendar', `Drafted meeting invite to ${to}: "${title}" (${when})`);
+    res.json({ ok: true, eventId: evt.id, draftId: draft.id });
+  });
+
+  // List sent mail (for the Sent view + searchable history).
+  app.get('/api/sent', (_req, res) => res.json({ messages: messages.recentSent(300) }));
+
+  // Learn the owner's voice from their own sent mail and persist it.
+  app.post('/api/voice/learn-from-sent', async (_req, res) => {
+    const sent = messages.recentSent(80).filter((m) => m.body && m.fromEmail);
+    if (sent.length < 3) return res.status(400).json({ error: 'Not enough sent mail yet — sync your mailbox first (need a few sent emails to learn from).' });
+    const samples = sent.map((m) => `Subject: ${m.subject}\n${m.body}`).join('\n\n---\n\n').slice(0, 16000);
+    try {
+      const r = await brain.learnVoice(samples);
+      saveOwner({ voiceNotes: r.voiceNotes });
+      brain.setOwner(loadOwner(cfg));
+      res.json({ ok: true, observations: r.observations, samples: sent.length });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   // ── Pipeline edits ──────────────────────────────────────────────────

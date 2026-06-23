@@ -22,6 +22,7 @@
       <div class="topbar-actions">
         <span id="brain-pill" class="pill">brain: …</span>
         <button id="logout-btn" class="btn ghost" style="display:none" onclick="logout()">Log out</button>
+        <button class="btn" onclick="openCompose()">✏️ Compose</button>
         <button id="sync-btn" class="btn primary">Sync &amp; work the inbox</button>
       </div>
     </header>
@@ -32,6 +33,7 @@
       <button class="tab" data-tab="calendar">Calendar <span id="cal-count" class="badge"></span></button>
       <button class="tab" data-tab="prospect">Prospect</button>
       <button class="tab" data-tab="drafts">Drafts <span id="drafts-count" class="badge"></span></button>
+      <button class="tab" data-tab="sent">Sent</button>
       <button class="tab" data-tab="digest">Morning brief</button>
       <button class="tab" data-tab="chat">Ask Big Dog</button>
       <button class="tab" data-tab="activity">Activity</button>
@@ -44,6 +46,7 @@
       <section id="calendar" class="panel"></section>
       <section id="prospect" class="panel"></section>
       <section id="drafts" class="panel"></section>
+      <section id="sent" class="panel"></section>
       <section id="digest" class="panel"></section>
       <section id="chat" class="panel"></section>
       <section id="activity" class="panel"></section>
@@ -60,6 +63,35 @@
         <input id="login-pw" type="password" placeholder="Password" />
         <button class="btn primary" onclick="doLogin()">Log in</button>
         <div id="login-err" class="muted small" style="color:var(--hot);margin-top:8px"></div>
+      </div>
+    </div>
+
+    <div id="compose" class="login-overlay" style="display:none">
+      <div class="login-box" style="max-width:640px;width:92%;text-align:left">
+        <div class="row" style="align-items:center">
+          <h2 id="compose-title" style="margin:0">✏️ New email</h2>
+          <button class="btn ghost" onclick="closeCompose()">✕</button>
+        </div>
+        <input id="cmp-to" class="subj" placeholder="To (email address)" style="width:100%;margin-top:10px" />
+        <input id="cmp-subject" class="subj" placeholder="Subject" style="width:100%" />
+        <textarea id="cmp-body" class="edit" style="width:100%;min-height:160px" placeholder="Write your message — or describe it below and hit ✨ AI help"></textarea>
+        <input id="cmp-instruction" class="subj" placeholder="✨ Tell Big Dog what to say, then click AI help…" style="width:100%" />
+        <div class="actions" style="margin-top:8px;flex-wrap:wrap">
+          <button class="btn" onclick="composeAI()">✨ AI help</button>
+          <button class="btn primary" onclick="composeSend(false)">Queue as draft</button>
+          <button class="btn good" onclick="composeSend(true)">Send now</button>
+          <button class="btn small ghost" onclick="toggleMeeting()">📅 Meeting invite</button>
+          <span id="cmp-status" class="muted small"></span>
+        </div>
+        <div id="cmp-meeting" style="display:none;margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
+          <div class="muted small" style="margin-bottom:6px">Big Dog will add it to your calendar and draft the invite email.</div>
+          <input id="cmp-mtitle" class="subj" placeholder="Meeting title (e.g. Intro call)" style="width:100%" />
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input id="cmp-mwhen" class="subj" type="datetime-local" style="flex:1" />
+            <input id="cmp-mmins" class="subj" type="number" value="30" style="width:110px" title="minutes" />
+          </div>
+          <button class="btn small primary" onclick="sendMeetingInvite()">Create invite</button>
+        </div>
       </div>
     </div>
 

@@ -112,6 +112,7 @@ function messageCard(m) {
         <div>
           <strong>${esc(m.fromName)}</strong>
           <span class="muted small">&lt;${esc(m.fromEmail)}&gt;</span>
+          ${m.folder === 'SENT' ? '<span class="tag" title="You sent this">↗ sent</span>' : ''}
           ${drafted ? '<span class="tag warm" title="Reply auto-drafted">✍ drafted</span>' : ''}
           <div>${esc(m.subject)}</div>
           ${m.summary ? `<div class="muted small">🐕 ${esc(m.summary)}</div>` : ''}
@@ -129,6 +130,8 @@ function messageCard(m) {
         <button class="btn small primary" onclick="draftReply('${m.id}')">🐕 Draft my reply</button>
         <button class="btn small" onclick="research('${m.id}','${esc(m.fromName)} ${esc(m.fromEmail)}')">🔎 Research</button>
         <button class="btn small ghost" onclick="remember('${esc(m.fromEmail)}')">📝 Remember</button>
+        ${drafted ? `<button class="btn small ghost" onclick="dismissDraft('${m.id}')" title="Remove the suggested draft">✕ Dismiss draft</button>` : ''}
+        <button class="btn small ghost" onclick="suppressSender('${esc(m.fromEmail)}')" title="Stop auto-drafting replies to this sender">🚫 Don't draft</button>
       </div>
     </div>`;
 }
@@ -193,6 +196,93 @@ async function runSearch() {
 }
 
 window.clearSearch = () => { inboxQuery = ''; renderInbox(); };
+
+window.dismissDraft = async (msgId) => {
+  try {
+    await api('/api/messages/' + encodeURIComponent(msgId) + '/dismiss-draft', { method: 'POST' });
+    await load();
+    if (inboxQuery.trim()) runSearch(); else renderInbox();
+    toast('Draft dismissed. 🐕');
+  } catch (e) { toast('Error: ' + e.message); }
+};
+
+window.suppressSender = async (email) => {
+  if (!email) return;
+  if (!confirm(`Stop Big Dog from auto-drafting replies to ${email}? (You can undo this in ⚙ Settings.)`)) return;
+  try {
+    await api('/api/suppressed', { method: 'POST', body: { email } });
+    await load();
+    if (inboxQuery.trim()) runSearch(); else renderInbox();
+    toast(`Won't draft replies to ${email}. 🚫`);
+  } catch (e) { toast('Error: ' + e.message); }
+};
+
+// ── Compose new email / meeting invite ───────────────────────────────────
+window.openCompose = (to = '') => {
+  $('#cmp-to').value = to; $('#cmp-subject').value = ''; $('#cmp-body').value = '';
+  $('#cmp-instruction').value = ''; $('#cmp-status').textContent = '';
+  $('#cmp-meeting').style.display = 'none';
+  $('#compose').style.display = 'flex';
+  setTimeout(() => $('#cmp-to').focus(), 50);
+};
+window.closeCompose = () => { $('#compose').style.display = 'none'; };
+window.toggleMeeting = () => {
+  const m = $('#cmp-meeting');
+  m.style.display = m.style.display === 'none' ? 'block' : 'none';
+  if (m.style.display === 'block' && !$('#cmp-mtitle').value) $('#cmp-mtitle').value = $('#cmp-subject').value || 'Intro call';
+};
+window.composeAI = async () => {
+  const instruction = $('#cmp-instruction').value.trim() || $('#cmp-body').value.trim();
+  if (!instruction) { $('#cmp-status').textContent = 'Tell Big Dog what to say first.'; return; }
+  $('#cmp-status').textContent = '🐕 Writing…';
+  try {
+    const r = await api('/api/compose', { method: 'POST', body: { to: $('#cmp-to').value.trim(), subject: $('#cmp-subject').value.trim(), body: $('#cmp-body').value.trim(), instruction } });
+    if (r.subject) $('#cmp-subject').value = r.subject;
+    if (r.body) $('#cmp-body').value = r.body;
+    $('#cmp-status').textContent = '✅ Drafted — edit and send, or queue it.';
+  } catch (e) { $('#cmp-status').textContent = 'Error: ' + e.message; }
+};
+window.composeSend = async (now) => {
+  const to = $('#cmp-to').value.trim();
+  const body = $('#cmp-body').value.trim();
+  if (!to.includes('@') || !body) { $('#cmp-status').textContent = 'Need a recipient and a message.'; return; }
+  $('#cmp-status').textContent = now ? 'Sending…' : 'Queuing…';
+  try {
+    const r = await api('/api/compose/send', { method: 'POST', body: { to, subject: $('#cmp-subject').value.trim() || '(no subject)', body, queue: !now } });
+    closeCompose(); await load();
+    toast(r.sent ? `Sent to ${to}. 🐕` : 'Queued in Drafts for approval. 🐕');
+  } catch (e) { $('#cmp-status').textContent = 'Error: ' + e.message; }
+};
+window.sendMeetingInvite = async () => {
+  const to = $('#cmp-to').value.trim();
+  if (!to.includes('@')) { $('#cmp-status').textContent = 'Enter the attendee email in the To field.'; return; }
+  $('#cmp-status').textContent = '📅 Creating invite…';
+  try {
+    await api('/api/meeting/invite', { method: 'POST', body: { to, title: $('#cmp-mtitle').value.trim() || 'Meeting', whenISO: $('#cmp-mwhen').value ? new Date($('#cmp-mwhen').value).toISOString() : undefined, minutes: Number($('#cmp-mmins').value || 30) } });
+    closeCompose(); await load();
+    toast('Meeting added to calendar + invite queued in Drafts. 🐕');
+  } catch (e) { $('#cmp-status').textContent = 'Error: ' + e.message; }
+};
+
+// ── Sent mailbox ─────────────────────────────────────────────────────────
+async function renderSent() {
+  const el = $('#sent');
+  el.innerHTML = '<div class="muted">Loading sent mail…</div>';
+  try {
+    const { messages: msgs } = await api('/api/sent');
+    if (!msgs.length) { el.innerHTML = '<div class="empty">No sent mail yet. Once your mailbox syncs (or you send from Big Dog), it shows here.</div>'; return; }
+    el.innerHTML = `<div class="muted small" style="margin-bottom:10px">${msgs.length} sent message(s). Use the inbox search to search across everything, including sent.</div>` +
+      msgs.map((m) => `
+      <div class="card">
+        <div class="row">
+          <div><span class="muted small">To</span> <strong>${esc(m.toEmails)}</strong>
+            <div>${esc(m.subject)}</div>
+            <div class="muted small">${esc((m.snippet || m.body || '').slice(0, 160))}</div></div>
+          <div class="muted small" style="white-space:nowrap">${fmtDate(m.date)}</div>
+        </div>
+      </div>`).join('');
+  } catch (e) { el.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+}
 
 window.toggleBody = (id) => {
   $('#body-' + id).classList.toggle('open');
@@ -717,12 +807,23 @@ async function renderSettings() {
       <textarea class="edit" id="pf-voice" placeholder="How you communicate…"></textarea>
 
       <div class="card" style="background:var(--bg);margin-top:10px">
-        <label class="small muted">Paste your real emails here, then learn your voice:</label>
+        <label class="small muted">Learn your voice from the emails you've actually sent — the best baseline for how Big Dog replies:</label>
+        <div class="actions" style="margin:6px 0">
+          <button class="btn small primary" onclick="learnFromSent()">🧬 Learn from my sent mail</button>
+          <span id="pf-sent-status" class="muted small"></span>
+        </div>
+        <label class="small muted">…or paste samples manually:</label>
         <textarea class="edit" id="pf-samples" placeholder="Paste several emails you've written (greetings, sign-offs and all)…"></textarea>
         <div class="actions">
-          <button class="btn small" onclick="learnVoice()">🧬 Learn my voice</button>
+          <button class="btn small" onclick="learnVoice()">🧬 Learn from pasted samples</button>
           <span id="pf-learn-status" class="muted small"></span>
         </div>
+      </div>
+
+      <div class="card" style="background:var(--bg);margin-top:10px">
+        <strong>🚫 Don't-draft list</strong>
+        <div class="muted small" style="margin:4px 0 8px">Senders Big Dog won't auto-draft replies to. Add from any message's “Don't draft” button.</div>
+        <div id="suppressed-list" class="muted small">Loading…</div>
       </div>
       <div class="actions">
         <button class="btn primary" onclick="saveProfile()">Save profile</button>
@@ -828,6 +929,7 @@ async function renderSettings() {
   }).catch(() => {});
   loadMailboxes();
   loadProfile();
+  loadSuppressed();
 }
 
 async function loadProfile() {
@@ -846,6 +948,28 @@ window.learnVoice = async () => {
     $('#pf-voice').value = r.voiceNotes || $('#pf-voice').value;
     $('#pf-learn-status').textContent = r.observations ? '✅ ' + r.observations + ' — review & Save.' : '✅ Review the voice profile above, then Save.';
   } catch (e) { $('#pf-learn-status').textContent = 'Error: ' + e.message; }
+};
+window.learnFromSent = async () => {
+  $('#pf-sent-status').textContent = '🧬 Reading your sent mail…';
+  try {
+    const r = await api('/api/voice/learn-from-sent', { method: 'POST' });
+    await loadProfile();
+    $('#pf-sent-status').textContent = `✅ Learned from ${r.samples} sent email(s)${r.observations ? ' — ' + r.observations : ''}. Saved.`;
+    toast('Voice updated from your sent mail. 🐕');
+  } catch (e) { $('#pf-sent-status').textContent = 'Error: ' + e.message; }
+};
+async function loadSuppressed() {
+  const el = $('#suppressed-list'); if (!el) return;
+  try {
+    const { emails } = await api('/api/suppressed');
+    el.innerHTML = emails.length
+      ? emails.map((e) => `<div class="row" style="padding:4px 0"><span>${esc(e)}</span><button class="btn small ghost" onclick="unsuppress('${esc(e)}')">Remove</button></div>`).join('')
+      : '<div class="muted small">Empty — Big Dog will draft for everyone worth replying to.</div>';
+  } catch { el.innerHTML = '<div class="muted small">—</div>'; }
+}
+window.unsuppress = async (email) => {
+  try { await api('/api/suppressed/' + encodeURIComponent(email), { method: 'DELETE' }); await loadSuppressed(); toast('Removed.'); }
+  catch (e) { toast('Error: ' + e.message); }
 };
 window.saveProfile = async () => {
   $('#pf-status').textContent = 'Saving…';
@@ -993,6 +1117,7 @@ function switchTab(name) {
   if (name === 'chat') renderChat();
   if (name === 'prospect') renderProspect();
   if (name === 'activity') renderActivity();
+  if (name === 'sent') renderSent();
   if (name === 'settings') renderSettings();
 }
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));
