@@ -134,6 +134,9 @@ export const messages = {
   recent(limit = 100): Message[] {
     return db.prepare('SELECT * FROM messages ORDER BY date DESC LIMIT ?').all(limit) as Message[];
   },
+  thread(threadId: string): Message[] {
+    return db.prepare('SELECT * FROM messages WHERE threadId = ? ORDER BY date ASC').all(threadId) as Message[];
+  },
   unanalyzed(limit = 20): Message[] {
     return db
       .prepare('SELECT * FROM messages WHERE analyzed = 0 ORDER BY date DESC LIMIT ?')

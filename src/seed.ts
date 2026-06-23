@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { messages, deals, events, isEmpty } from './db.js';
+import { threadKey } from './threading.js';
 
 /**
  * Seed a realistic slice of inbox + pipeline + calendar so Big Dog is alive
@@ -60,7 +61,7 @@ export function seedDemoData(): void {
       id: randomUUID().slice(0, 16),
       accountId: 'demo',
       messageId: `<${randomUUID()}@demo>`,
-      threadId: randomUUID(),
+      threadId: threadKey(m.subject, m.fromEmail),
       fromName: m.fromName,
       fromEmail: m.fromEmail,
       toEmails: 'you@yourcompany.com',

@@ -94,7 +94,7 @@ export async function triageNewMail(
     ) {
       try {
         const dealForDraft = dealId ? deals.get(dealId) ?? null : null;
-        const { subject, body, rationale } = await brain.draftReply(m, dealForDraft, memory);
+        const { subject, body, rationale } = await brain.draftReply(m, dealForDraft, memory, messages.thread(m.threadId));
         const draft: Draft = {
           id: randomUUID().slice(0, 16),
           accountId: m.accountId || accounts.accounts[0]?.id || 'demo',

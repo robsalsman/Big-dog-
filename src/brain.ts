@@ -165,6 +165,7 @@ export class BigDogBrain {
     m: Message,
     deal: Deal | null,
     memory = '',
+    thread: Message[] = [],
   ): Promise<{ subject: string; body: string; rationale: string }> {
     if (!this.provider.live) return fallbackDraft(m, this.owner);
 
@@ -183,6 +184,13 @@ export class BigDogBrain {
       ? `This ties to the deal "${deal.title}" (stage: ${deal.stage}). The agreed next step is: ${deal.nextStep}.`
       : 'No deal is open with this contact yet — qualify and drive toward a next step.';
     const memoryBlock = memory ? `\n\nWhat you remember about this contact (use it to personalize):\n${memory}\n` : '';
+    // Full conversation so the reply has context, not just the latest message.
+    const priorThread = thread
+      .filter((t) => t.id !== m.id)
+      .slice(-8)
+      .map((t) => `[${t.folder === 'SENT' ? 'me' : t.fromName}] ${t.body.slice(0, 600)}`)
+      .join('\n---\n');
+    const threadBlock = priorThread ? `\n\nEarlier in this thread (oldest first):\n${priorThread}\n` : '';
 
     try {
       const out = await this.provider.complete({
@@ -190,8 +198,8 @@ export class BigDogBrain {
         maxTokens: 1500,
         schema,
         user:
-          `Write my reply to this email — as me, in my voice. ${dealLine}${memoryBlock}\n\n` +
-          `From: ${m.fromName} <${m.fromEmail}>\nSubject: ${m.subject}\n\n${m.body.slice(0, 4000)}\n\n` +
+          `Write my reply to this email — as me, in my voice. ${dealLine}${memoryBlock}${threadBlock}\n\n` +
+          `The new message to reply to:\nFrom: ${m.fromName} <${m.fromEmail}>\nSubject: ${m.subject}\n\n${m.body.slice(0, 4000)}\n\n` +
           `Return the reply subject (keep "Re:" if appropriate), the full reply body (ready to send, signed off as me), ` +
           `and a one-sentence rationale for the angle you took. Respond with ONLY the JSON object.`,
       });

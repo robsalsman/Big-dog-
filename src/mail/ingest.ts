@@ -2,6 +2,7 @@ import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { createHash } from 'node:crypto';
 import { messages } from '../db.js';
+import { threadKey } from '../threading.js';
 import type { Account, Message } from '../types.js';
 
 const MAX_PER_ACCOUNT = 40;
@@ -72,6 +73,7 @@ export async function syncAccount(account: Account): Promise<number> {
           summary: null,
           analyzed: 0,
         };
+        record.threadId = threadKey(record.subject, record.fromEmail);
         messages.upsert(record);
         added++;
       }

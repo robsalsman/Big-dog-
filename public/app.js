@@ -125,6 +125,7 @@ function messageCard(m) {
       <div id="intel-${m.id}"></div>
       <div class="actions">
         <button class="btn small ghost" onclick="toggleBody('${m.id}')">Read</button>
+        <button class="btn small" onclick="viewThread('${m.threadId}','${m.id}')">🧵 Thread</button>
         <button class="btn small primary" onclick="draftReply('${m.id}')">🐕 Draft my reply</button>
         <button class="btn small" onclick="research('${m.id}','${esc(m.fromName)} ${esc(m.fromEmail)}')">🔎 Research</button>
         <button class="btn small ghost" onclick="remember('${esc(m.fromEmail)}')">📝 Remember</button>
@@ -147,8 +148,24 @@ function renderInbox() {
     searchTimer = setTimeout(runSearch, 220);
   });
   if (inboxQuery.trim()) runSearch();
-  else renderInboxList(state.messages);
+  else renderInboxList(state.messages.filter((m) => m.folder !== 'SENT'));
 }
+
+window.viewThread = async (threadId, msgId) => {
+  const slot = $('#intel-' + msgId);
+  slot.innerHTML = '<div class="muted small" style="margin-top:8px">🧵 Loading thread…</div>';
+  try {
+    const { messages: msgs } = await api('/api/threads/' + encodeURIComponent(threadId));
+    if (msgs.length <= 1) { slot.innerHTML = '<div class="muted small" style="margin-top:8px">No earlier messages in this thread yet.</div>'; return; }
+    const items = msgs.map((t) => {
+      const me = t.folder === 'SENT';
+      return `<div class="bubble ${me ? 'me' : 'dog'}" style="max-width:100%">
+        <div class="small" style="opacity:.7">${me ? 'You' : esc(t.fromName)} · ${fmtDate(t.date)}</div>
+        ${esc(t.body).slice(0, 1500)}</div>`;
+    }).join('');
+    slot.innerHTML = `<div class="card" style="margin-top:8px"><div class="muted small" style="margin-bottom:6px">🧵 ${msgs.length} messages</div><div class="chatlog">${items}</div></div>`;
+  } catch (e) { slot.innerHTML = '<div class="muted small">Error: ' + esc(e.message) + '</div>'; }
+};
 
 function renderInboxList(msgs) {
   const wrap = $('#inbox-list');

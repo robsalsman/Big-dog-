@@ -7,6 +7,7 @@ import { runAgent } from './agent/agent.js';
 import { runCadenceSweep } from './cadence.js';
 import { findProspects, saveProspectAsDeal, activeProvider, findContactEmail, parseCsv, enrichRows } from './prospect.js';
 import { runCampaign } from './campaign.js';
+import { recordSentMessage } from './sentmail.js';
 import { loadSettings, saveSettings, buildProvider, publicSettings, testProvider } from './settings.js';
 import {
   isAuthConfigured, setPassword, verifyPassword, issueToken, verifyToken, parseCookies, COOKIE,
@@ -136,8 +137,9 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     if (!m) return res.status(404).json({ error: 'message not found' });
     const deal = m.dealId ? deals.get(m.dealId) ?? null : null;
     const memory = m.fromEmail ? memories.recall(m.fromEmail) : '';
+    const thread = messages.thread(m.threadId);
     try {
-      const { subject, body, rationale } = await brain.draftReply(m, deal, memory);
+      const { subject, body, rationale } = await brain.draftReply(m, deal, memory, thread);
       const draft: Draft = {
         id: randomUUID().slice(0, 16),
         accountId: m.accountId,
@@ -159,6 +161,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
         if (account) {
           await sendMail(account, { to: draft.toEmails, subject, body, inReplyTo: m.messageId });
           drafts.setStatus(draft.id, 'sent', new Date().toISOString());
+          recordSentMessage({ accountId: account.id, fromName: account.label, fromEmail: account.email, toEmails: draft.toEmails, subject, body });
         }
       }
       res.json({ draft, autoSent: cfg.sendMode === 'auto' });
@@ -172,20 +175,28 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     res.json({ ok: true });
   });
 
+  // Full conversation thread for a message.
+  app.get('/api/threads/:id', (req, res) => {
+    res.json({ messages: messages.thread(req.params.id) });
+  });
+
   // ── Approve / send / discard a draft ────────────────────────────────
   app.post('/api/drafts/:id/send', async (req, res) => {
     const draft = drafts.get(req.params.id);
     if (!draft) return res.status(404).json({ error: 'draft not found' });
     const account = accountById(draft.accountId);
+    const body = (req.body?.body as string) ?? draft.body;
+    const subject = (req.body?.subject as string) ?? draft.subject;
     if (!account) {
       drafts.setStatus(draft.id, 'sent', new Date().toISOString());
+      const from = accountsCfg.accounts[0];
+      recordSentMessage({ accountId: draft.accountId, fromName: from?.label ?? 'Me', fromEmail: from?.email ?? cfg.owner.signature.split('\n')[0] ?? 'me', toEmails: draft.toEmails, subject, body });
       return res.json({ ok: true, note: 'No live account for this draft (demo) — marked as sent.' });
     }
     try {
-      const body = (req.body?.body as string) ?? draft.body;
-      const subject = (req.body?.subject as string) ?? draft.subject;
       await sendMail(account, { to: draft.toEmails, subject, body, inReplyTo: draft.inReplyTo });
       drafts.setStatus(draft.id, 'sent', new Date().toISOString());
+      recordSentMessage({ accountId: account.id, fromName: account.label, fromEmail: account.email, toEmails: draft.toEmails, subject, body });
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
