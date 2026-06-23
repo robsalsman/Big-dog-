@@ -11,6 +11,7 @@ import { recordSentMessage } from './sentmail.js';
 import { allAccounts, getAccount, fileAccountIds, saveAccount, deleteAccount, testAccount } from './accounts.js';
 import type { Account } from './types.js';
 import { loadSettings, saveSettings, buildProvider, publicSettings, testProvider } from './settings.js';
+import { loadOwner, saveOwner } from './profile.js';
 import {
   isAuthConfigured, setPassword, verifyPassword, issueToken, verifyToken, parseCookies, COOKIE,
 } from './auth.js';
@@ -404,6 +405,29 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     if (!domain.trim() || !name.trim()) return res.status(400).json({ error: 'need name and domain' });
     try {
       res.json(await findContactEmail({ name, domain }, brain));
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Owner profile + voice ───────────────────────────────────────────
+  app.get('/api/profile', (_req, res) => {
+    res.json(loadOwner(cfg));
+  });
+
+  app.post('/api/profile', (req, res) => {
+    saveOwner(req.body ?? {});
+    const owner = loadOwner(cfg);
+    brain.setOwner(owner);
+    res.json(owner);
+  });
+
+  // Analyze pasted emails and propose a voice profile (review before saving).
+  app.post('/api/voice/learn', async (req, res) => {
+    const samples = String(req.body?.samples ?? '').trim();
+    if (samples.length < 80) return res.status(400).json({ error: 'paste at least a few of your real emails' });
+    try {
+      res.json(await brain.learnVoice(samples));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }

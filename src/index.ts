@@ -1,6 +1,7 @@
 import { loadConfig, loadAccounts } from './config.js';
 import { BigDogBrain } from './brain.js';
 import { loadSettings, buildProvider } from './settings.js';
+import { loadOwner } from './profile.js';
 import { seedPasswordFromEnv, isAuthConfigured } from './auth.js';
 import { allAccounts } from './accounts.js';
 import { createServer } from './server.js';
@@ -16,7 +17,7 @@ async function main() {
   // which fall back to env vars. Switchable later from the in-app Settings screen.
   const provider = buildProvider(loadSettings(cfg));
   if (provider.ping) await provider.ping();
-  const brain = new BigDogBrain(provider, cfg.owner, cfg.calcom?.bookingUrl);
+  const brain = new BigDogBrain(provider, loadOwner(cfg), cfg.calcom?.bookingUrl);
 
   // Seed a dashboard password from env if one isn't set yet.
   seedPasswordFromEnv(process.env.BIGDOG_PASSWORD);

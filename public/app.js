@@ -618,6 +618,32 @@ async function renderSettings() {
       Current: <strong>${s.live ? esc(s.backend) : 'offline'}</strong>.
     </div>
 
+    <div class="card" style="border-left:3px solid var(--accent)">
+      <strong>🧬 Your profile &amp; voice — the clone of you</strong>
+      <div class="muted small" style="margin:4px 0 10px">This is what makes Big Dog sound like <em>you</em>. Paste a batch of your real sent emails and Big Dog will learn your style.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input class="subj" id="pf-name" placeholder="Your name" style="flex:1;min-width:140px" />
+        <input class="subj" id="pf-title" placeholder="Title" style="flex:1;min-width:120px" />
+        <input class="subj" id="pf-company" placeholder="Company" style="flex:1;min-width:120px" />
+      </div>
+      <textarea class="edit" id="pf-signature" placeholder="Email signature" style="min-height:70px"></textarea>
+      <label class="small muted">Voice profile (drives every draft)</label>
+      <textarea class="edit" id="pf-voice" placeholder="How you communicate…"></textarea>
+
+      <div class="card" style="background:var(--bg);margin-top:10px">
+        <label class="small muted">Paste your real emails here, then learn your voice:</label>
+        <textarea class="edit" id="pf-samples" placeholder="Paste several emails you've written (greetings, sign-offs and all)…"></textarea>
+        <div class="actions">
+          <button class="btn small" onclick="learnVoice()">🧬 Learn my voice</button>
+          <span id="pf-learn-status" class="muted small"></span>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn primary" onclick="saveProfile()">Save profile</button>
+        <span id="pf-status" class="muted small"></span>
+      </div>
+    </div>
+
     <div class="card">
       <label class="small muted">Backend</label>
       <select id="set-provider" class="subj" style="max-width:260px">
@@ -705,7 +731,37 @@ async function renderSettings() {
       : '⚠ No password set — the dashboard is open to anyone who can reach it. Set one below.');
   }).catch(() => {});
   loadMailboxes();
+  loadProfile();
 }
+
+async function loadProfile() {
+  try {
+    const o = await api('/api/profile');
+    $('#pf-name').value = o.name || ''; $('#pf-title').value = o.title || ''; $('#pf-company').value = o.company || '';
+    $('#pf-signature').value = o.signature || ''; $('#pf-voice').value = o.voiceNotes || '';
+  } catch (e) { /* not authed */ }
+}
+window.learnVoice = async () => {
+  const samples = $('#pf-samples').value.trim();
+  if (samples.length < 80) { $('#pf-learn-status').textContent = 'Paste a few real emails first.'; return; }
+  $('#pf-learn-status').textContent = '🧬 Studying your writing…';
+  try {
+    const r = await api('/api/voice/learn', { method: 'POST', body: { samples } });
+    $('#pf-voice').value = r.voiceNotes || $('#pf-voice').value;
+    $('#pf-learn-status').textContent = r.observations ? '✅ ' + r.observations + ' — review & Save.' : '✅ Review the voice profile above, then Save.';
+  } catch (e) { $('#pf-learn-status').textContent = 'Error: ' + e.message; }
+};
+window.saveProfile = async () => {
+  $('#pf-status').textContent = 'Saving…';
+  try {
+    await api('/api/profile', { method: 'POST', body: {
+      name: $('#pf-name').value, title: $('#pf-title').value, company: $('#pf-company').value,
+      signature: $('#pf-signature').value, voiceNotes: $('#pf-voice').value,
+    } });
+    $('#pf-status').textContent = '✅ Saved — Big Dog now writes as you.';
+    toast('Voice profile saved. 🧬');
+  } catch (e) { $('#pf-status').textContent = 'Error: ' + e.message; }
+};
 
 const MB_PRESETS = {
   gmail: { imaphost: 'imap.gmail.com', imapport: 993, smtphost: 'smtp.gmail.com', smtpport: 465, smtpsecure: true },

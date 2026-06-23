@@ -87,6 +87,11 @@ Beyond triage and drafting, Big Dog is a real agent:
   with the **whole thread** as context, not just the latest message.
 - **In-app mailbox setup** — add/test/remove IMAP/SMTP mailboxes from ⚙ Settings
   (provider presets for Gmail/Outlook/IONOS/Yahoo) — no `accounts.json` editing.
+- **Learn my voice** — paste a batch of your real sent emails and Big Dog distills a
+  precise **voice profile** (greeting, sign-off, rhythm, directness, quirks) and saves
+  it to your persona, so every draft sounds like *you*. (⚙ Settings → Your voice.)
+  Tip: export your years of ChatGPT/Claude chats (each app's Data Export) and paste in
+  the emails you've had them write.
 
 See [ROADMAP.md](ROADMAP.md) for what's next on the path to a complete product.
 
@@ -278,6 +283,7 @@ src/
   index.ts          Entry point — boots provider, server, bots, scheduler
   config.ts         Loads .env + config/accounts.json
   persona.ts        The Big Dog system prompt (your clone)
+  profile.ts        Owner profile + learned voice (persisted, in-app editable)
   brain.ts          The brain — triage, drafting, digest, chat (provider-agnostic)
   llm/provider.ts   Pluggable LLM backends: Claude · ChatGPT · Ollama · fallback
   settings.ts       Runtime backend/key settings (the ⚙ Settings screen)

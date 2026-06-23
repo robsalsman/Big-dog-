@@ -13,12 +13,52 @@ import type { Message, Deal, CalendarEvent, MessageAnalysis, Owner, Prospect } f
 export class BigDogBrain {
   private provider: LLMProvider;
   private owner: Owner;
+  private bookingUrl: string;
   private system: string;
 
   constructor(provider: LLMProvider, owner: Owner, bookingUrl = '') {
     this.provider = provider;
     this.owner = owner;
+    this.bookingUrl = bookingUrl;
     this.system = bigDogSystemPrompt(owner, bookingUrl);
+  }
+
+  /** Update the owner profile/voice and rebuild the persona (from the in-app editor). */
+  setOwner(owner: Owner): void {
+    this.owner = owner;
+    this.system = bigDogSystemPrompt(owner, this.bookingUrl);
+  }
+
+  /**
+   * Study real emails the owner has written and distill a precise voice profile
+   * that can drop straight into the persona. Returns a proposal to review.
+   */
+  async learnVoice(samples: string): Promise<{ voiceNotes: string; observations: string }> {
+    if (!this.provider.live) {
+      return { voiceNotes: this.owner.voiceNotes, observations: 'No model live — paste samples and connect Claude/ChatGPT to analyze them.' };
+    }
+    const schema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: { voiceNotes: { type: 'string' }, observations: { type: 'string' } },
+      required: ['voiceNotes', 'observations'],
+    };
+    try {
+      const out = await this.provider.complete({
+        system: 'You are an expert writing analyst. You reverse-engineer a person\'s email writing style from samples.',
+        maxTokens: 1300,
+        schema,
+        user:
+          `Below are real emails I have written. Study how I ACTUALLY communicate and write a tight VOICE PROFILE that another writer (or an AI) could use to imitate me exactly.\n\n` +
+          `Capture, specifically and behaviorally: my typical greeting and sign-off, sentence length and rhythm, formality, how warm vs. direct I am, hedging vs. assertiveness, punctuation/emoji/dash habits, how I open and close, recurring phrases, and how I make asks.\n\n` +
+          `Return JSON {"voiceNotes", "observations"} where "voiceNotes" is the profile written as concise directives suitable to drop into a system prompt (e.g. "Open with the person's first name. Keep paragraphs to 1-2 sentences. ..."), and "observations" is a one-line summary of my style.\n\n` +
+          `=== MY EMAILS ===\n${samples.slice(0, 16000)}`,
+      });
+      const parsed = JSON.parse(extractJson(out)) as { voiceNotes: string; observations: string };
+      return { voiceNotes: parsed.voiceNotes || this.owner.voiceNotes, observations: parsed.observations || '' };
+    } catch (err) {
+      return { voiceNotes: this.owner.voiceNotes, observations: `Couldn't analyze: ${(err as Error).message}` };
+    }
   }
 
   get live(): boolean {
