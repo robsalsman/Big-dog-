@@ -24,6 +24,7 @@ import { triageNewMail } from './pipeline.js';
 import { generateDigest } from './digest.js';
 import { exportIcs } from './calendar.js';
 import { calcomConfigured, syncCalcomBookings } from './calcom.js';
+import { zoomConfigured, createZoomMeeting, saveZoomCreds, publicZoom, testZoom } from './zoom.js';
 import { browserConfigured, browserReady } from './browser.js';
 import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
@@ -103,6 +104,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       accounts: allAccounts().map((a) => ({ id: a.id, label: a.label, email: a.email })),
       stages: DEAL_STAGES,
       calcom: { configured: calcomConfigured(cfg), bookingUrl: cfg.calcom?.bookingUrl ?? '' },
+      zoom: { configured: zoomConfigured() },
       browser: { configured: browserConfigured(), ready: browserReady() },
       prospect: activeProvider(cfg),
       messages: messages.recent(100),
@@ -316,18 +318,32 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const minutes = Number(req.body?.minutes ?? 30);
     const start = req.body?.whenISO ? new Date(String(req.body.whenISO)) : new Date(Date.now() + 86_400_000);
     const end = new Date(start.getTime() + minutes * 60_000);
+
+    // Create a real Zoom meeting if Zoom is connected.
+    let videoLink = cfg.calcom?.bookingUrl || '';
+    let videoNote = '';
+    if (zoomConfigured()) {
+      try {
+        const z = await createZoomMeeting({ topic: title, startISO: start.toISOString(), minutes });
+        videoLink = z.joinUrl;
+        videoNote = `Zoom: ${z.joinUrl}${z.password ? ` (passcode ${z.password})` : ''}`;
+      } catch (err) {
+        logActivity('error', `Zoom meeting create failed: ${(err as Error).message}`);
+      }
+    }
+
     const evt: CalendarEvent = {
       id: randomUUID().slice(0, 16), title, start: start.toISOString(), end: end.toISOString(),
-      location: cfg.calcom?.bookingUrl || 'Video call', attendees: to, notes: 'Created from Big Dog compose.', dealId: null, source: 'big-dog',
+      location: videoLink || 'Video call', attendees: to, notes: videoNote || 'Created from Big Dog compose.', dealId: null, source: 'big-dog',
     };
     events.upsert(evt);
     const when = start.toISOString().slice(0, 16).replace('T', ' ');
-    const booking = cfg.calcom?.bookingUrl ? ` Include this booking link: ${cfg.calcom.bookingUrl}.` : '';
+    const link = videoLink ? ` Include this video meeting link: ${videoLink}.` : (cfg.calcom?.bookingUrl ? ` Include this booking link: ${cfg.calcom.bookingUrl}.` : '');
     let subject = `Invite: ${title}`;
-    let body = `Hi,\n\nProposing ${title} on ${when} for ${minutes} minutes.${cfg.calcom?.bookingUrl ? `\n\nBook/confirm here: ${cfg.calcom.bookingUrl}` : ''}\n\n${cfg.owner.signature}`;
+    let body = `Hi,\n\nProposing ${title} on ${when} for ${minutes} minutes.${videoLink ? `\n\nJoin link: ${videoLink}` : (cfg.calcom?.bookingUrl ? `\n\nBook/confirm here: ${cfg.calcom.bookingUrl}` : '')}\n\n${cfg.owner.signature}`;
     if (brain.live) {
       try {
-        const c = await brain.composeEmail({ to, subject, instruction: `Write a short, friendly meeting invite for "${title}" on ${when} (${minutes} minutes).${booking}` });
+        const c = await brain.composeEmail({ to, subject, instruction: `Write a short, friendly meeting invite for "${title}" on ${when} (${minutes} minutes).${link}` });
         subject = c.subject; body = c.body;
       } catch { /* keep template */ }
     }
@@ -339,6 +355,14 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     logActivity('calendar', `Drafted meeting invite to ${to}: "${title}" (${when})`);
     res.json({ ok: true, eventId: evt.id, draftId: draft.id });
   });
+
+  // ── Zoom (video meetings) ───────────────────────────────────────────
+  app.get('/api/zoom', (_req, res) => res.json(publicZoom()));
+  app.post('/api/zoom', (req, res) => {
+    saveZoomCreds(req.body ?? {});
+    res.json(publicZoom());
+  });
+  app.post('/api/zoom/test', async (_req, res) => res.json(await testZoom()));
 
   // List sent mail (for the Sent view + searchable history).
   app.get('/api/sent', (_req, res) => res.json({ messages: messages.recentSent(300) }));

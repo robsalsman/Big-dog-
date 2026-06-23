@@ -870,6 +870,22 @@ async function renderSettings() {
     <div class="muted small" style="margin-top:6px">Paste your key and click <strong>Save &amp; connect</strong> — it stores the key and switches Big Dog to that backend. (“Test only” checks the key without saving.)</div>
 
     <div class="card" style="margin-top:22px">
+      <strong>📹 Video meetings (Zoom)</strong> <span id="zoom-state" class="tag">checking…</span>
+      <div class="muted small" style="margin:4px 0 8px">
+        When connected, scheduling a meeting creates a real Zoom link and attaches it to the calendar event + invite email.
+        In Zoom Marketplace, build a <strong>Server-to-Server OAuth</strong> app, add the <code>meeting:write</code> scope, then paste the three values.
+      </div>
+      <input class="subj" id="zoom-accountId" placeholder="Account ID" style="width:100%" />
+      <input class="subj" id="zoom-clientId" placeholder="Client ID" style="width:100%" />
+      <input class="subj" id="zoom-clientSecret" type="password" placeholder="Client Secret" style="width:100%" />
+      <div class="actions">
+        <button class="btn primary" onclick="saveZoom()">💾 Save &amp; connect Zoom</button>
+        <button class="btn" onclick="testZoom2()">Test</button>
+        <span id="zoom-status" class="muted small"></span>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:22px">
       <strong>🔒 Security</strong>
       <div class="muted small" id="auth-state" style="margin:4px 0 8px">Checking…</div>
       <input class="subj" id="pw-current" type="password" placeholder="Current password (only when changing)" />
@@ -930,6 +946,7 @@ async function renderSettings() {
   loadMailboxes();
   loadProfile();
   loadSuppressed();
+  loadZoom();
 }
 
 async function loadProfile() {
@@ -1107,6 +1124,32 @@ window.testSettings = async () => {
     const r = await api('/api/settings/test', { method: 'POST', body: settingsBody() });
     $('#set-status').textContent = (r.ok ? '✅ ' : '❌ ') + r.detail;
   } catch (e) { $('#set-status').textContent = 'Error: ' + e.message; }
+};
+
+async function loadZoom() {
+  try {
+    const z = await api('/api/zoom');
+    const tag = $('#zoom-state'); if (tag) { tag.textContent = z.configured ? 'connected' : 'not set'; tag.className = 'tag ' + (z.configured ? 'warm' : ''); }
+    if ($('#zoom-accountId')) $('#zoom-accountId').value = z.accountId || '';
+  } catch { /* not authed */ }
+}
+function zoomBody() {
+  return { accountId: $('#zoom-accountId').value.trim(), clientId: $('#zoom-clientId').value.trim(), clientSecret: $('#zoom-clientSecret').value };
+}
+window.saveZoom = async () => {
+  $('#zoom-status').textContent = 'Saving…';
+  try {
+    await api('/api/zoom', { method: 'POST', body: zoomBody() });
+    const t = await api('/api/zoom/test', { method: 'POST' });
+    await loadZoom();
+    $('#zoom-status').textContent = (t.ok ? '✅ ' : '⚠ ') + t.detail;
+    toast(t.ok ? 'Zoom connected. 🐕' : 'Saved — but: ' + t.detail);
+  } catch (e) { $('#zoom-status').textContent = 'Error: ' + e.message; }
+};
+window.testZoom2 = async () => {
+  $('#zoom-status').textContent = 'Testing…';
+  try { const t = await api('/api/zoom/test', { method: 'POST' }); $('#zoom-status').textContent = (t.ok ? '✅ ' : '❌ ') + t.detail; }
+  catch (e) { $('#zoom-status').textContent = 'Error: ' + e.message; }
 };
 
 // ── Tabs ─────────────────────────────────────────────────────────────────
