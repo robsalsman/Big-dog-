@@ -484,11 +484,35 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   });
 
   app.post('/api/settings', async (req, res) => {
-    saveSettings(req.body ?? {});
+    const body = { ...(req.body ?? {}) } as Record<string, unknown>;
+    // Pasting a key means "use this backend" — switch to it so the key actually
+    // takes effect (avoids saving a Claude key while the backend stays on Ollama).
+    const ak = String(body.anthropicKey ?? '').trim();
+    const ok = String(body.openaiKey ?? '').trim();
+    if (ak) body.provider = 'anthropic';
+    else if (ok) body.provider = 'openai';
+    saveSettings(body);
     const provider = buildProvider(loadSettings(cfg));
-    if (provider.ping) await provider.ping();
+    try {
+      if (provider.ping) await provider.ping();
+    } catch {
+      /* ping is best-effort */
+    }
     brain.setProvider(provider);
-    res.json({ ...publicSettings(loadSettings(cfg)), backend: brain.backend, live: brain.live });
+    // Verify with a real call so the user gets unambiguous confirmation.
+    let verified = brain.live;
+    let verifyDetail = brain.live ? `Connected to ${brain.backend}` : 'No backend configured.';
+    if (brain.live) {
+      try {
+        const t = await testProvider(provider);
+        verified = t.ok;
+        verifyDetail = t.detail;
+      } catch (err) {
+        verified = false;
+        verifyDetail = (err as Error).message;
+      }
+    }
+    res.json({ ...publicSettings(loadSettings(cfg)), backend: brain.backend, live: brain.live, verified, verifyDetail });
   });
 
   app.post('/api/settings/test', async (req, res) => {

@@ -762,10 +762,11 @@ async function renderSettings() {
     </div>
 
     <div class="actions">
-      <button class="btn primary" onclick="saveSettings()">Save</button>
-      <button class="btn" onclick="testSettings()">Test connection</button>
+      <button class="btn primary" onclick="saveSettings()">💾 Save &amp; connect</button>
+      <button class="btn" onclick="testSettings()">Test only</button>
       <span id="set-status" class="muted small"></span>
     </div>
+    <div class="muted small" style="margin-top:6px">Paste your key and click <strong>Save &amp; connect</strong> — it stores the key and switches Big Dog to that backend. (“Test only” checks the key without saving.)</div>
 
     <div class="card" style="margin-top:22px">
       <strong>🔒 Security</strong>
@@ -961,13 +962,18 @@ function settingsBody() {
 }
 
 window.saveSettings = async () => {
-  $('#set-status').textContent = 'Saving…';
+  $('#set-status').textContent = 'Saving & connecting…';
   try {
     const r = await api('/api/settings', { method: 'POST', body: settingsBody() });
     await load();
     await renderSettings();
-    $('#set-status') && ($('#set-status').textContent = r.live ? `Saved — now on ${r.backend}.` : 'Saved — backend offline (check key/model).');
-    toast('Settings saved. 🐕');
+    const st = $('#set-status');
+    if (st) {
+      if (r.verified) st.innerHTML = `✅ Saved &amp; connected — <strong>${esc(r.backend)}</strong>.`;
+      else if (r.live) st.innerHTML = `⚠ Key saved, but the test call failed: ${esc(r.verifyDetail || 'unknown')}. Check the key is valid and the server can reach the API.`;
+      else st.textContent = 'Saved — no backend active (check the key/model).';
+    }
+    toast(r.verified ? `Connected to ${r.backend}. 🐕` : 'Settings saved.');
   } catch (e) { $('#set-status').textContent = 'Error: ' + e.message; }
 };
 
