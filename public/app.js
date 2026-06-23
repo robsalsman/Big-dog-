@@ -208,6 +208,18 @@ window.research = async (id, who) => {
   } catch (e) { slot.innerHTML = '<div class="muted small">Error: ' + esc(e.message) + '</div>'; }
 };
 
+window.browsePage = async () => {
+  const url = $('#browse-url').value.trim();
+  const instruction = $('#browse-q').value.trim();
+  const out = $('#browse-out');
+  if (!url) { out.innerHTML = '<div class="muted small">Enter a URL.</div>'; return; }
+  out.innerHTML = '<div class="muted small">🌐 Opening the page…</div>';
+  try {
+    const r = await api('/api/browse', { method: 'POST', body: { url, instruction } });
+    out.innerHTML = `<div class="card"><div class="muted small"><strong>🌐 ${esc(r.url)}</strong>${r.summarized ? ' — Big Dog\'s read' : ' — page contents'}</div><div class="markdown">${md(r.content)}</div></div>`;
+  } catch (e) { out.innerHTML = '<div class="muted small">Error: ' + esc(e.message) + '</div>'; }
+};
+
 window.remember = async (email) => {
   const note = prompt(`What should Big Dog remember about ${email}?`);
   if (!note) return;
@@ -497,6 +509,22 @@ function renderProspect() {
       <button class="btn primary" onclick="findLeads()">🐕 Find leads</button>
     </div>
     <div id="prospect-out" style="margin-top:14px"></div>
+
+    ${(state.browser && state.browser.configured) ? `
+    <div class="card" style="margin-top:22px;border-left:3px solid var(--accent)">
+      <strong>🌐 Read any web page</strong>
+      <span class="pill" style="margin-left:8px">${state.browser.ready ? 'browser ready' : 'install agent-browser'}</span>
+      <div class="muted small" style="margin:4px 0 10px">
+        Big Dog opens the page in a real headless browser (handles JS-rendered sites search misses) and reads it.
+        Add an instruction to have it pull out exactly what you need — names, titles, emails, a summary.
+      </div>
+      <input id="browse-url" class="subj" placeholder="https://company.com/team" />
+      <input id="browse-q" class="subj" placeholder="What should Big Dog extract? (optional) e.g. names + titles of the leadership team" />
+      <div class="actions">
+        <button class="btn small primary" onclick="browsePage()">🐕 Read it</button>
+      </div>
+      <div id="browse-out" style="margin-top:12px"></div>
+    </div>` : ''}
 
     <div class="card" style="margin-top:22px">
       <strong>📥 Import a lead list (CSV)</strong>

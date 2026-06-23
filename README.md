@@ -78,6 +78,12 @@ Beyond triage and drafting, Big Dog is a real agent:
   the top names → draft a **personalized cold intro to each** (with an opt-out line),
   all queued in Drafts for your approval. Optionally drops everyone into the pipeline.
   (Prospect tab → Run a campaign.)
+- **Live browser** — powered by Vercel Labs' [`agent-browser`](https://github.com/vercel-labs/agent-browser):
+  Big Dog opens pages in a real headless Chrome and reads them, so JS-rendered
+  team/contact pages and profiles that search snippets miss become usable for lead
+  research and email-pattern learning. Optional — install `agent-browser` (the Docker
+  image bundles it + Chrome). (Prospect tab → *Read any web page*, or the `browse_page`
+  operator tool. Toggle with `BIGDOG_BROWSER`.)
 
 - **Dashboard login** — protect the whole app (inbox, deals, sending) behind a
   password (⚙ Settings → Security, or `BIGDOG_PASSWORD`). Open by default on a

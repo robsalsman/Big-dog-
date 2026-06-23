@@ -35,6 +35,8 @@ export interface AppConfig {
   // Lead generation / prospecting
   prospectProvider: 'web' | 'apollo' | 'auto';
   apolloKey: string | undefined;
+  // Real-browser reading (Vercel Labs agent-browser)
+  browser: { mode: 'auto' | 'on' | 'off'; allowedDomains: string };
 }
 
 const DEFAULT_OWNER: Owner = {
@@ -70,6 +72,9 @@ export function loadConfig(): AppConfig {
   const prospectRaw = (process.env.BIGDOG_PROSPECT_PROVIDER || 'auto').toLowerCase();
   const prospectProvider: AppConfig['prospectProvider'] =
     prospectRaw === 'web' || prospectRaw === 'apollo' ? prospectRaw : 'auto';
+  const browserRaw = (process.env.BIGDOG_BROWSER || 'auto').toLowerCase();
+  const browserMode: AppConfig['browser']['mode'] =
+    browserRaw === 'on' || browserRaw === 'off' ? browserRaw : 'auto';
   const calcomKey = process.env.CALCOM_API_KEY?.trim();
   const tgToken = process.env.TELEGRAM_BOT_TOKEN?.trim();
   const slackBot = process.env.SLACK_BOT_TOKEN?.trim();
@@ -90,6 +95,7 @@ export function loadConfig(): AppConfig {
     agentMaxSteps: Number(process.env.BIGDOG_AGENT_MAX_STEPS ?? 8),
     prospectProvider,
     apolloKey,
+    browser: { mode: browserMode, allowedDomains: process.env.BIGDOG_BROWSER_ALLOWED_DOMAINS?.trim() || '' },
     provider,
     ollamaHost: process.env.OLLAMA_HOST || 'http://localhost:11434',
     ollamaModel: process.env.OLLAMA_MODEL || 'llama3.1',

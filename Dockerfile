@@ -15,6 +15,17 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install --include=dev
 
+# Optional: Vercel Labs agent-browser + headless Chrome, so Big Dog can read
+# JS-rendered web pages for lead research. Build-safe — if the download is
+# blocked the image still builds and the app runs without it. Disable with
+# `--build-arg WITH_BROWSER=false`.
+ARG WITH_BROWSER=true
+RUN if [ "$WITH_BROWSER" = "true" ]; then \
+      npm install -g agent-browser \
+      && agent-browser install --with-deps \
+      || echo "[big-dog] agent-browser install skipped (continuing without live browser)"; \
+    fi
+
 # App source.
 COPY tsconfig.json ./
 COPY src ./src

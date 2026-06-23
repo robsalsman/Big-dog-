@@ -8,6 +8,7 @@ import { createServer } from './server.js';
 import { startScheduler } from './scheduler.js';
 import { startBots } from './bots/index.js';
 import { setNotifiers } from './notify.js';
+import { ensureBrowser } from './browser.js';
 import { seedDemoData } from './seed.js';
 
 async function main() {
@@ -22,6 +23,9 @@ async function main() {
 
   // Seed a dashboard password from env if one isn't set yet.
   seedPasswordFromEnv(process.env.BIGDOG_PASSWORD);
+
+  // Detect the optional real-browser capability (Vercel Labs agent-browser).
+  const browserOk = await ensureBrowser();
 
   // Make sure there's something to look at on first run.
   seedDemoData();
@@ -41,6 +45,7 @@ async function main() {
     console.log(`      Mailboxes:  ${allAccounts().length || 'none yet — add one in ⚙ Settings'}`);
     console.log(`      Calendar:   ${cfg.calcom ? `Cal.com (${cfg.calcom.baseUrl})` : 'built-in only (add CALCOM_API_KEY for Cal.com)'}`);
     console.log(`      Bots:       ${notifiers.length ? `${notifiers.length} connected` : 'none (add Telegram/Slack tokens to .env)'}`);
+    console.log(`      Browser:    ${browserOk ? 'agent-browser ready 🌐' : 'off (install agent-browser CLI for live page reading)'}`);
     console.log(`      Send mode:  ${cfg.sendMode}`);
     console.log(`      Auth:       ${isAuthConfigured() ? 'password set 🔒' : 'OPEN — set a password in ⚙ Settings'}`);
     console.log('');

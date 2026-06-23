@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { messages, deals, events, drafts, memories } from '../db.js';
 import { findContactEmail } from '../prospect.js';
+import { browserConfigured } from '../browser.js';
 import type { BigDogBrain } from '../brain.js';
 import type { AppConfig } from '../config.js';
 import type { AccountsConfig, Deal, DealStage, Draft, CalendarEvent } from '../types.js';
@@ -43,7 +44,7 @@ function queueDraft(ctx: AgentContext, d: Partial<Draft> & { toEmails: string; s
 
 /** The toolbox Big Dog can use when running autonomously. */
 export function buildToolset(ctx: AgentContext): AgentTool[] {
-  return [
+  const tools: AgentTool[] = [
     {
       name: 'list_deals',
       description: 'List all open deals (id, title, stage, value, nextStep, contactEmail).',
@@ -207,4 +208,20 @@ export function buildToolset(ctx: AgentContext): AgentTool[] {
       },
     },
   ];
+
+  // Real-browser reading (Vercel Labs agent-browser) — only when configured.
+  if (browserConfigured()) {
+    tools.push({
+      name: 'browse_page',
+      description:
+        'Open a web page in a real headless browser and read it — handles JS-rendered sites (team/contact pages, profiles) that search snippets miss. args: {url, instruction?}. instruction tells Big Dog what to extract.',
+      async run(args) {
+        if (!args.url) return 'Need {url}.';
+        const r = await ctx.brain.browse(String(args.url), String(args.instruction ?? ''));
+        return r.content.slice(0, 2500);
+      },
+    });
+  }
+
+  return tools;
 }

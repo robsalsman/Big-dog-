@@ -78,6 +78,11 @@ ANTHROPIC_API_KEY=sk-ant-...
 You can configure everything else (mailboxes, Cal.com, Telegram/Slack, prospecting)
 later from the **⚙ Settings** tab in the dashboard — no redeploy needed.
 
+> **Live browser (optional):** the Docker image installs Vercel Labs'
+> `agent-browser` + headless Chrome so Big Dog can read JS-rendered pages for
+> lead research. It's on by default. To build a slimmer image without it:
+> `docker compose build --build-arg WITH_BROWSER=false` (or set `BIGDOG_BROWSER=off`).
+
 > Mailboxes: drop your real `config/accounts.json` on the server (it's gitignored
 > and never committed), or just add mailboxes in ⚙ Settings after first launch.
 

@@ -23,6 +23,7 @@ import { triageNewMail } from './pipeline.js';
 import { generateDigest } from './digest.js';
 import { exportIcs } from './calendar.js';
 import { calcomConfigured, syncCalcomBookings } from './calcom.js';
+import { browserConfigured, browserReady } from './browser.js';
 import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
 import type { AccountsConfig, DealStage, Draft } from './types.js';
@@ -101,6 +102,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       accounts: allAccounts().map((a) => ({ id: a.id, label: a.label, email: a.email })),
       stages: DEAL_STAGES,
       calcom: { configured: calcomConfigured(cfg), bookingUrl: cfg.calcom?.bookingUrl ?? '' },
+      browser: { configured: browserConfigured(), ready: browserReady() },
       prospect: activeProvider(cfg),
       messages: messages.recent(100),
       deals: deals.all(),
@@ -343,6 +345,18 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     if (!query.trim()) return res.status(400).json({ error: 'empty query' });
     try {
       res.json({ brief: await brain.research(query) });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Read any web page in a real headless browser (agent-browser) ────
+  app.post('/api/browse', async (req, res) => {
+    const url = (req.body?.url as string) ?? '';
+    const instruction = (req.body?.instruction as string) ?? '';
+    if (!url.trim()) return res.status(400).json({ error: 'empty url' });
+    try {
+      res.json(await brain.browse(url.trim(), instruction));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }

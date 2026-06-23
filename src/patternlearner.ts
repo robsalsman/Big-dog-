@@ -1,5 +1,6 @@
 import { patterns, type DomainPattern } from './db.js';
 import { inferPatternKey } from './emailfinder.js';
+import { ensureBrowser, pageHtml } from './browser.js';
 import type { BigDogBrain } from './brain.js';
 
 /**
@@ -40,8 +41,11 @@ export async function scrapeDomainEmails(domain: string, baseUrl?: string): Prom
   const base = (baseUrl ?? `https://${domain}`).replace(/\/$/, '');
   const re = new RegExp(`[a-z0-9._%+-]+@${domain.replace(/\./g, '\\.')}`, 'gi');
   const seen = new Set<string>();
+  const useBrowser = await ensureBrowser(); // upgrade JS-rendered pages when available
   for (const path of SCRAPE_PATHS) {
-    const html = await fetchText(base + path);
+    let html = await fetchText(base + path);
+    // Plain fetch missed it? A real browser can render emails injected by JS.
+    if (!html && useBrowser) html = await pageHtml(base + path);
     for (const m of html.matchAll(re)) seen.add(m[0].toLowerCase());
     if (seen.size >= 15) break;
   }
