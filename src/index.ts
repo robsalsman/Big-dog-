@@ -1,6 +1,7 @@
 import { loadConfig, loadAccounts } from './config.js';
 import { BigDogBrain } from './brain.js';
 import { loadSettings, buildProvider } from './settings.js';
+import { seedPasswordFromEnv, isAuthConfigured } from './auth.js';
 import { createServer } from './server.js';
 import { startScheduler } from './scheduler.js';
 import { startBots } from './bots/index.js';
@@ -15,6 +16,9 @@ async function main() {
   const provider = buildProvider(loadSettings(cfg));
   if (provider.ping) await provider.ping();
   const brain = new BigDogBrain(provider, cfg.owner, cfg.calcom?.bookingUrl);
+
+  // Seed a dashboard password from env if one isn't set yet.
+  seedPasswordFromEnv(process.env.BIGDOG_PASSWORD);
 
   // Make sure there's something to look at on first run.
   seedDemoData();
@@ -34,6 +38,7 @@ async function main() {
     console.log(`      Calendar:   ${cfg.calcom ? `Cal.com (${cfg.calcom.baseUrl})` : 'built-in only (add CALCOM_API_KEY for Cal.com)'}`);
     console.log(`      Bots:       ${notifiers.length ? `${notifiers.length} connected` : 'none (add Telegram/Slack tokens to .env)'}`);
     console.log(`      Send mode:  ${cfg.sendMode}`);
+    console.log(`      Auth:       ${isAuthConfigured() ? 'password set 🔒' : 'OPEN — set a password in ⚙ Settings'}`);
     console.log('');
   });
 }

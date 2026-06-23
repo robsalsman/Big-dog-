@@ -132,6 +132,21 @@ input.subj { width: 100%; background: var(--bg); color: var(--text); border: 1px
 }
 .toast.show { opacity: 1; }
 
+.login-overlay {
+  position: fixed; inset: 0; background: var(--bg);
+  display: flex; align-items: center; justify-content: center; z-index: 100;
+}
+.login-box {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 34px; width: 340px; max-width: 90vw; text-align: center;
+}
+.login-box h2 { margin: 10px 0 4px; }
+.login-box input {
+  width: 100%; margin: 14px 0; padding: 11px; border-radius: 8px;
+  background: var(--bg); color: var(--text); border: 1px solid var(--line);
+}
+.login-box .btn { width: 100%; }
+
 @media (max-width: 800px) {
   .board { grid-template-columns: 1fr; }
 }

@@ -10,12 +10,33 @@ async function api(path, opts = {}) {
     ...opts,
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
+  if (res.status === 401 && !path.startsWith('/api/auth/')) {
+    showLogin();
+    throw new Error('Please log in.');
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || 'request failed');
   }
   return res.json();
 }
+
+function showLogin() {
+  $('#login').style.display = 'flex';
+  setTimeout(() => $('#login-pw')?.focus(), 50);
+}
+window.doLogin = async () => {
+  try {
+    await api('/api/auth/login', { method: 'POST', body: { password: $('#login-pw').value } });
+    $('#login').style.display = 'none';
+    $('#login-err').textContent = '';
+    boot();
+  } catch (e) { $('#login-err').textContent = e.message; }
+};
+window.logout = async () => {
+  await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
+  location.reload();
+};
 
 function toast(msg) {
   const t = $('#toast');
@@ -615,8 +636,37 @@ async function renderSettings() {
       <button class="btn primary" onclick="saveSettings()">Save</button>
       <button class="btn" onclick="testSettings()">Test connection</button>
       <span id="set-status" class="muted small"></span>
+    </div>
+
+    <div class="card" style="margin-top:22px">
+      <strong>🔒 Security</strong>
+      <div class="muted small" id="auth-state" style="margin:4px 0 8px">Checking…</div>
+      <input class="subj" id="pw-current" type="password" placeholder="Current password (only when changing)" />
+      <input class="subj" id="pw-new" type="password" placeholder="New password (min 6 chars)" />
+      <div class="actions">
+        <button class="btn primary" onclick="setDashboardPassword()">Set password</button>
+        <span id="pw-status" class="muted small"></span>
+      </div>
     </div>`;
+  api('/api/auth/status').then((st) => {
+    $('#auth-state') && ($('#auth-state').textContent = st.required
+      ? 'A dashboard password is set. Anyone must log in.'
+      : '⚠ No password set — the dashboard is open to anyone who can reach it. Set one below.');
+  }).catch(() => {});
 }
+
+window.setDashboardPassword = async () => {
+  const password = $('#pw-new').value;
+  const current = $('#pw-current').value;
+  if (!password || password.length < 6) { $('#pw-status').textContent = 'Min 6 characters.'; return; }
+  try {
+    await api('/api/auth/password', { method: 'POST', body: { password, current } });
+    $('#pw-status').textContent = '✅ Password set — you are logged in.';
+    $('#pw-new').value = ''; $('#pw-current').value = '';
+    $('#logout-btn').style.display = '';
+    toast('Dashboard password set. 🔒');
+  } catch (e) { $('#pw-status').textContent = 'Error: ' + e.message; }
+};
 
 function settingsBody() {
   return {
@@ -681,4 +731,14 @@ $('#sync-btn').addEventListener('click', async () => {
 });
 
 // ── Boot ─────────────────────────────────────────────────────────────────
-load().catch((e) => toast('Failed to load: ' + e.message));
+$('#login-pw') && $('#login-pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+
+async function boot() {
+  let st = { required: false, authed: true };
+  try { st = await api('/api/auth/status'); } catch { /* ignore */ }
+  $('#logout-btn').style.display = st.required && st.authed ? '' : 'none';
+  if (st.required && !st.authed) { showLogin(); return; }
+  $('#login').style.display = 'none';
+  load().catch((e) => toast('Failed to load: ' + e.message));
+}
+boot();

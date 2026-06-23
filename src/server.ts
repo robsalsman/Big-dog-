@@ -8,6 +8,9 @@ import { runCadenceSweep } from './cadence.js';
 import { findProspects, saveProspectAsDeal, activeProvider, findContactEmail, parseCsv, enrichRows } from './prospect.js';
 import { runCampaign } from './campaign.js';
 import { loadSettings, saveSettings, buildProvider, publicSettings, testProvider } from './settings.js';
+import {
+  isAuthConfigured, setPassword, verifyPassword, issueToken, verifyToken, parseCookies, COOKIE,
+} from './auth.js';
 import type { Prospect } from './types.js';
 import { syncAll } from './mail/ingest.js';
 import { sendMail } from './mail/send.js';
@@ -27,6 +30,51 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   const app = express();
   app.use(express.json({ limit: '2mb' }));
   app.use(express.static(PUBLIC_DIR));
+
+  // Parse cookies for auth.
+  app.use((req, _res, next) => {
+    (req as unknown as { cookies: Record<string, string> }).cookies = parseCookies(req.headers.cookie);
+    next();
+  });
+  const cookieOf = (req: express.Request) => (req as unknown as { cookies: Record<string, string> }).cookies?.[COOKIE];
+  const setSession = (res: express.Response, token: string, maxAgeSec: number) =>
+    res.setHeader('Set-Cookie', `${COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAgeSec}`);
+
+  // ── Auth (unguarded) ────────────────────────────────────────────────
+  app.get('/api/auth/status', (req, res) => {
+    res.json({ required: isAuthConfigured(), authed: !isAuthConfigured() || verifyToken(cookieOf(req)) });
+  });
+  app.post('/api/auth/login', (req, res) => {
+    if (!isAuthConfigured() || verifyPassword(String(req.body?.password ?? ''))) {
+      setSession(res, issueToken(), 30 * 86_400);
+      return res.json({ ok: true });
+    }
+    res.status(401).json({ error: 'wrong password' });
+  });
+  app.post('/api/auth/logout', (_req, res) => {
+    setSession(res, '', 0);
+    res.json({ ok: true });
+  });
+  app.post('/api/auth/password', (req, res) => {
+    const next = String(req.body?.password ?? '');
+    if (next.length < 6) return res.status(400).json({ error: 'password must be at least 6 characters' });
+    // To change an existing password you must already be authed (or give the current one).
+    if (isAuthConfigured()) {
+      const ok = verifyToken(cookieOf(req)) || verifyPassword(String(req.body?.current ?? ''));
+      if (!ok) return res.status(401).json({ error: 'current password or login required' });
+    }
+    setPassword(next);
+    setSession(res, issueToken(), 30 * 86_400);
+    res.json({ ok: true });
+  });
+
+  // ── Guard everything else under /api ────────────────────────────────
+  app.use((req, res, next) => {
+    if (!req.path.startsWith('/api/')) return next();
+    if (req.path.startsWith('/api/auth/')) return next();
+    if (!isAuthConfigured() || verifyToken(cookieOf(req))) return next();
+    res.status(401).json({ error: 'authentication required' });
+  });
 
   const accountById = (id: string) => accountsCfg.accounts.find((a) => a.id === id);
   const agentCtx = { cfg, accounts: accountsCfg, brain };

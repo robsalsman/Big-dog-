@@ -21,6 +21,7 @@
       </div>
       <div class="topbar-actions">
         <span id="brain-pill" class="pill">brain: …</span>
+        <button id="logout-btn" class="btn ghost" style="display:none" onclick="logout()">Log out</button>
         <button id="sync-btn" class="btn primary">Sync &amp; work the inbox</button>
       </div>
     </header>
@@ -48,6 +49,18 @@
     </main>
 
     <div id="toast" class="toast"></div>
+
+    <div id="login" class="login-overlay" style="display:none">
+      <div class="login-box">
+        <div class="logo" style="font-size:46px">🐕</div>
+        <h2 id="login-title">What's up, Big Dog!?</h2>
+        <p class="muted small" id="login-sub">Enter your password to continue.</p>
+        <input id="login-pw" type="password" placeholder="Password" />
+        <button class="btn primary" onclick="doLogin()">Log in</button>
+        <div id="login-err" class="muted small" style="color:var(--hot);margin-top:8px"></div>
+      </div>
+    </div>
+
     <script src="/app.js"></script>
   </body>
 </html>
