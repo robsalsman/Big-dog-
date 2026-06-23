@@ -8,6 +8,8 @@ import { runCadenceSweep } from './cadence.js';
 import { findProspects, saveProspectAsDeal, activeProvider, findContactEmail, parseCsv, enrichRows } from './prospect.js';
 import { runCampaign } from './campaign.js';
 import { recordSentMessage } from './sentmail.js';
+import { allAccounts, getAccount, fileAccountIds, saveAccount, deleteAccount, testAccount } from './accounts.js';
+import type { Account } from './types.js';
 import { loadSettings, saveSettings, buildProvider, publicSettings, testProvider } from './settings.js';
 import {
   isAuthConfigured, setPassword, verifyPassword, issueToken, verifyToken, parseCookies, COOKIE,
@@ -77,7 +79,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     res.status(401).json({ error: 'authentication required' });
   });
 
-  const accountById = (id: string) => accountsCfg.accounts.find((a) => a.id === id);
+  const accountById = (id: string) => getAccount(id);
   const agentCtx = { cfg, accounts: accountsCfg, brain };
 
   // ── Whole-world snapshot for the dashboard ──────────────────────────
@@ -88,7 +90,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       backend: brain.backend,
       sendMode: cfg.sendMode,
       autoDraft: cfg.autoDraft,
-      accounts: accountsCfg.accounts.map((a) => ({ id: a.id, label: a.label, email: a.email })),
+      accounts: allAccounts().map((a) => ({ id: a.id, label: a.label, email: a.email })),
       stages: DEAL_STAGES,
       calcom: { configured: calcomConfigured(cfg), bookingUrl: cfg.calcom?.bookingUrl ?? '' },
       prospect: activeProvider(cfg),
@@ -103,7 +105,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   // ── Sync mailboxes, then triage ─────────────────────────────────────
   app.post('/api/sync', async (_req, res) => {
     try {
-      const synced = await syncAll(accountsCfg.accounts);
+      const synced = await syncAll(allAccounts());
       const triaged = await triageNewMail(brain, cfg, accountsCfg);
       const bookings = calcomConfigured(cfg) ? await syncCalcomBookings(cfg).catch(() => 0) : 0;
       res.json({ synced, triaged, bookings });
@@ -189,7 +191,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const subject = (req.body?.subject as string) ?? draft.subject;
     if (!account) {
       drafts.setStatus(draft.id, 'sent', new Date().toISOString());
-      const from = accountsCfg.accounts[0];
+      const from = allAccounts()[0];
       recordSentMessage({ accountId: draft.accountId, fromName: from?.label ?? 'Me', fromEmail: from?.email ?? cfg.owner.signature.split('\n')[0] ?? 'me', toEmails: draft.toEmails, subject, body });
       return res.json({ ok: true, note: 'No live account for this draft (demo) — marked as sent.' });
     }
@@ -382,7 +384,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const rows = req.body?.csv ? parseCsv(String(req.body.csv)) : (req.body?.rows as Record<string, string>[]) ?? [];
     if (!rows.length) return res.status(400).json({ error: 'no rows — paste a CSV with a header row' });
     try {
-      const accountId = accountsCfg.accounts[0]?.id ?? 'demo';
+      const accountId = allAccounts()[0]?.id ?? 'demo';
       const result = await runCampaign(rows, brain, accountId, {
         verify: !!req.body?.verify,
         addToPipeline: req.body?.addToPipeline !== false,
@@ -427,6 +429,54 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     if (!req.body?.anthropicKey) merged.anthropicKey = loadSettings(cfg).anthropicKey;
     if (!req.body?.openaiKey) merged.openaiKey = loadSettings(cfg).openaiKey;
     res.json(await testProvider(buildProvider(merged)));
+  });
+
+  // ── Mailbox management (in-app, no JSON editing) ────────────────────
+  const acctPublic = (a: Account, fileIds: Set<string>) => ({
+    id: a.id, label: a.label, email: a.email, source: fileIds.has(a.id) ? 'file' : 'app',
+    imap: { host: a.imap.host, port: a.imap.port, secure: a.imap.secure, user: a.imap.user },
+    smtp: { host: a.smtp.host, port: a.smtp.port, secure: a.smtp.secure, user: a.smtp.user },
+  });
+
+  app.get('/api/accounts', (_req, res) => {
+    const fileIds = fileAccountIds();
+    res.json({ accounts: allAccounts().map((a) => acctPublic(a, fileIds)) });
+  });
+
+  function readAccount(body: Record<string, unknown>): Account | null {
+    const b = body as Record<string, any>;
+    if (!b.id || !b.email || !b.imap?.host || !b.smtp?.host) return null;
+    const slug = String(b.id).toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    return {
+      id: slug,
+      label: String(b.label || b.email),
+      email: String(b.email),
+      imap: { host: String(b.imap.host), port: Number(b.imap.port || 993), secure: b.imap.secure !== false, user: String(b.imap.user || b.email), pass: String(b.imap.pass || '') },
+      smtp: { host: String(b.smtp.host), port: Number(b.smtp.port || 465), secure: !!b.smtp.secure, user: String(b.smtp.user || b.email), pass: String(b.smtp.pass || b.imap.pass || '') },
+    };
+  }
+
+  app.post('/api/accounts/test', async (req, res) => {
+    const a = readAccount(req.body ?? {});
+    if (!a) return res.status(400).json({ error: 'need id, email, imap.host, smtp.host' });
+    // Fill password from the saved account if the form left it blank.
+    if (!a.imap.pass) { const existing = getAccount(a.id); if (existing) { a.imap.pass = existing.imap.pass; a.smtp.pass = a.smtp.pass || existing.smtp.pass; } }
+    res.json(await testAccount(a));
+  });
+
+  app.post('/api/accounts', (req, res) => {
+    const a = readAccount(req.body ?? {});
+    if (!a) return res.status(400).json({ error: 'need id, email, imap.host, smtp.host' });
+    if (fileAccountIds().has(a.id)) return res.status(400).json({ error: 'that id is defined in config/accounts.json (read-only here)' });
+    if (!a.imap.pass) { const existing = getAccount(a.id); if (existing) { a.imap.pass = existing.imap.pass; if (!a.smtp.pass) a.smtp.pass = existing.smtp.pass; } }
+    saveAccount(a);
+    res.json({ ok: true });
+  });
+
+  app.delete('/api/accounts/:id', (req, res) => {
+    if (fileAccountIds().has(req.params.id)) return res.status(400).json({ error: 'file account — remove it from config/accounts.json' });
+    deleteAccount(req.params.id);
+    res.json({ ok: true });
   });
 
   // ── Search across the inbox + pipeline ──────────────────────────────

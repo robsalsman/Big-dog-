@@ -3,6 +3,7 @@ import { triageNewMail } from './pipeline.js';
 import { generateDigest } from './digest.js';
 import { calcomConfigured, syncCalcomBookings } from './calcom.js';
 import { runCadenceSweep } from './cadence.js';
+import { allAccounts } from './accounts.js';
 import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
 import type { AccountsConfig } from './types.js';
@@ -19,14 +20,15 @@ export function startScheduler(
   brain: BigDogBrain,
   notifiers: Notifier[] = [],
 ): void {
-  // Periodic mail sync + triage + Cal.com booking pull.
-  const hasMail = accountsCfg.accounts.length > 0;
-  if (cfg.syncMinutes > 0 && (hasMail || calcomConfigured(cfg))) {
+  // Periodic mail sync + triage + Cal.com booking pull. Accounts are read live
+  // each tick, so mailboxes added in-app are picked up without a restart.
+  if (cfg.syncMinutes > 0) {
     const everyMs = cfg.syncMinutes * 60_000;
     setInterval(async () => {
       try {
-        if (hasMail) {
-          await syncAll(accountsCfg.accounts);
+        const accts = allAccounts();
+        if (accts.length) {
+          await syncAll(accts);
           const n = await triageNewMail(brain, cfg, accountsCfg);
           if (n > 0) console.log(`[big-dog] triaged ${n} new message(s)`);
         }

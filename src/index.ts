@@ -2,6 +2,7 @@ import { loadConfig, loadAccounts } from './config.js';
 import { BigDogBrain } from './brain.js';
 import { loadSettings, buildProvider } from './settings.js';
 import { seedPasswordFromEnv, isAuthConfigured } from './auth.js';
+import { allAccounts } from './accounts.js';
 import { createServer } from './server.js';
 import { startScheduler } from './scheduler.js';
 import { startBots } from './bots/index.js';
@@ -34,7 +35,7 @@ async function main() {
     console.log(
       `      Brain:      ${brain.live ? `live (${brain.backend})` : `offline (${brain.backend}) — set BIGDOG_PROVIDER`}`,
     );
-    console.log(`      Mailboxes:  ${accountsCfg.accounts.length || 'none yet — see config/accounts.example.json'}`);
+    console.log(`      Mailboxes:  ${allAccounts().length || 'none yet — add one in ⚙ Settings'}`);
     console.log(`      Calendar:   ${cfg.calcom ? `Cal.com (${cfg.calcom.baseUrl})` : 'built-in only (add CALCOM_API_KEY for Cal.com)'}`);
     console.log(`      Bots:       ${notifiers.length ? `${notifiers.length} connected` : 'none (add Telegram/Slack tokens to .env)'}`);
     console.log(`      Send mode:  ${cfg.sendMode}`);

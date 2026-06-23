@@ -79,6 +79,15 @@ Beyond triage and drafting, Big Dog is a real agent:
   all queued in Drafts for your approval. Optionally drops everyone into the pipeline.
   (Prospect tab → Run a campaign.)
 
+- **Dashboard login** — protect the whole app (inbox, deals, sending) behind a
+  password (⚙ Settings → Security, or `BIGDOG_PASSWORD`). Open by default on a
+  trusted local machine.
+- **True threading + sent mail** — replies you send are recorded and threaded with
+  the conversation; the 🧵 Thread view shows both sides, and Big Dog drafts replies
+  with the **whole thread** as context, not just the latest message.
+- **In-app mailbox setup** — add/test/remove IMAP/SMTP mailboxes from ⚙ Settings
+  (provider presets for Gmail/Outlook/IONOS/Yahoo) — no `accounts.json` editing.
+
 See [ROADMAP.md](ROADMAP.md) for what's next on the path to a complete product.
 
 ---
@@ -272,6 +281,10 @@ src/
   brain.ts          The brain — triage, drafting, digest, chat (provider-agnostic)
   llm/provider.ts   Pluggable LLM backends: Claude · ChatGPT · Ollama · fallback
   settings.ts       Runtime backend/key settings (the ⚙ Settings screen)
+  auth.ts           Dashboard password login (scrypt + signed session cookie)
+  accounts.ts       Live mailbox list (config file + in-app) and connection tests
+  threading.ts      Conversation threading key
+  sentmail.ts       Records sent email into the threaded store
   db.ts             SQLite store (messages, deals, events, drafts, digests)
   mail/ingest.ts    IMAP → normalized messages
   mail/send.ts      SMTP send

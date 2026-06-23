@@ -5,6 +5,7 @@ import { generateDigest } from '../digest.js';
 import { runAgent } from '../agent/agent.js';
 import { runCadenceSweep } from '../cadence.js';
 import { findProspects, findContactEmail } from '../prospect.js';
+import { allAccounts } from '../accounts.js';
 import type { BigDogBrain } from '../brain.js';
 import type { AppConfig } from '../config.js';
 import type { AccountsConfig } from '../types.js';
@@ -120,10 +121,11 @@ export async function routeMessage(rawText: string, deps: BotDeps): Promise<stri
   }
 
   if (cmd === '/sync' || cmd === 'sync') {
-    const synced = await syncAll(deps.accounts.accounts);
+    const accts = allAccounts();
+    const synced = await syncAll(accts);
     const triaged = await triageNewMail(deps.brain, deps.cfg, deps.accounts);
     const newMail = synced.reduce((n, s) => n + s.added, 0);
-    return `🐕 Synced ${newMail} new message(s) and worked ${triaged}. ${deps.accounts.accounts.length ? '' : '(No mailboxes configured yet.)'}`;
+    return `🐕 Synced ${newMail} new message(s) and worked ${triaged}. ${accts.length ? '' : '(No mailboxes configured yet.)'}`;
   }
 
   // Default: chat with the clone.

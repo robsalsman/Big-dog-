@@ -10,9 +10,9 @@ Here's an honest, prioritized list of what would make it a *complete, trustworth
 product* — roughly in the order I'd build it.
 
 ## 1. Trust & safety (do these before sending real volume)
-- **Dashboard auth** — right now anyone who can reach the port sees all mail/deals
-  and can send. Add a login (single password / token) and bind to localhost by
-  default. *Highest priority if you ever host it.*
+- ✅ **Dashboard auth** — *done.* Password login (scrypt + signed cookie), set via
+  `BIGDOG_PASSWORD` or in-app under Settings → Security; open by default on a trusted
+  local machine.
 - **Outreach compliance** — a **suppression list** (never email opted-out/bounced
   addresses), automatic unsubscribe handling (detect "no"/"unsubscribe" replies →
   suppress + close the deal), and physical-address/identity footer for CAN-SPAM.
@@ -21,12 +21,12 @@ product* — roughly in the order I'd build it.
 - **Bounce handling** — read bounces/auto-replies and mark emails invalid + suppress.
 
 ## 2. Core product completeness
-- **Sent-mail + true threading** — record sent messages, thread replies into one
-  conversation view, and feed the *whole thread* to the drafter (today it replies to
-  a single message). This is the biggest quality lever for reply quality.
-- **In-app mailbox setup** — add/test IMAP/SMTP accounts from the UI (like the AI
-  Settings screen) instead of editing `config/accounts.json`. Makes it truly
-  shareable. Add OAuth for Gmail/Outlook so no app passwords.
+- ✅ **Sent-mail + true threading** — *done.* Sent mail is recorded and threaded;
+  the drafter gets the whole conversation as context; 🧵 Thread view shows both sides.
+- ✅ **In-app mailbox setup** — *done.* Add/test/remove IMAP/SMTP mailboxes from the
+  UI with provider presets. **Remaining:** OAuth for Gmail/Outlook (XOAUTH2) so users
+  don't need app passwords — needs a registered Google/Azure OAuth app + redirect
+  flow; app passwords work today.
 - **Contacts / people view** — a real contact record (not just deals): every person,
   their threads, memory, last touch. Deals link to contacts.
 - **Deal detail + activity timeline** — open a deal and see its full history: emails,

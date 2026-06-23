@@ -665,12 +665,97 @@ async function renderSettings() {
         <span id="pw-status" class="muted small"></span>
       </div>
     </div>`;
+  el.innerHTML += `
+    <div class="card" id="mailboxes-card">
+      <strong>📬 Mailboxes</strong>
+      <div class="muted small" style="margin:4px 0 8px">Add the mailboxes Big Dog should manage — no JSON editing. Use an App Password for Gmail/Outlook.</div>
+      <div id="mailbox-list" class="muted small">Loading…</div>
+      <div style="margin-top:12px">
+        <label class="small muted">Preset</label>
+        <select id="mb-preset" class="subj" style="max-width:220px" onchange="applyPreset()">
+          <option value="">Custom…</option>
+          <option value="gmail">Gmail / Google Workspace</option>
+          <option value="outlook">Outlook / Microsoft 365</option>
+          <option value="ionos">IONOS</option>
+          <option value="yahoo">Yahoo</option>
+        </select>
+        <input class="subj" id="mb-id" placeholder="short id (e.g. work)" />
+        <input class="subj" id="mb-email" placeholder="you@yourdomain.com" />
+        <input class="subj" id="mb-pass" type="password" placeholder="password / app password" />
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input class="subj" id="mb-imaphost" placeholder="imap host" style="flex:1" />
+          <input class="subj" id="mb-imapport" placeholder="993" style="width:90px" />
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input class="subj" id="mb-smtphost" placeholder="smtp host" style="flex:1" />
+          <input class="subj" id="mb-smtpport" placeholder="465" style="width:90px" />
+          <label class="small muted" style="white-space:nowrap"><input type="checkbox" id="mb-smtpsecure" checked /> SSL</label>
+        </div>
+        <div class="actions">
+          <button class="btn small primary" onclick="saveMailbox()">Add mailbox</button>
+          <button class="btn small" onclick="testMailbox()">Test</button>
+          <span id="mb-status" class="muted small"></span>
+        </div>
+      </div>
+    </div>`;
+
   api('/api/auth/status').then((st) => {
     $('#auth-state') && ($('#auth-state').textContent = st.required
       ? 'A dashboard password is set. Anyone must log in.'
       : '⚠ No password set — the dashboard is open to anyone who can reach it. Set one below.');
   }).catch(() => {});
+  loadMailboxes();
 }
+
+const MB_PRESETS = {
+  gmail: { imaphost: 'imap.gmail.com', imapport: 993, smtphost: 'smtp.gmail.com', smtpport: 465, smtpsecure: true },
+  outlook: { imaphost: 'outlook.office365.com', imapport: 993, smtphost: 'smtp.office365.com', smtpport: 587, smtpsecure: false },
+  ionos: { imaphost: 'imap.ionos.com', imapport: 993, smtphost: 'smtp.ionos.com', smtpport: 465, smtpsecure: true },
+  yahoo: { imaphost: 'imap.mail.yahoo.com', imapport: 993, smtphost: 'smtp.mail.yahoo.com', smtpport: 465, smtpsecure: true },
+};
+window.applyPreset = () => {
+  const p = MB_PRESETS[$('#mb-preset').value]; if (!p) return;
+  $('#mb-imaphost').value = p.imaphost; $('#mb-imapport').value = p.imapport;
+  $('#mb-smtphost').value = p.smtphost; $('#mb-smtpport').value = p.smtpport;
+  $('#mb-smtpsecure').checked = p.smtpsecure;
+};
+
+async function loadMailboxes() {
+  try {
+    const { accounts } = await api('/api/accounts');
+    const list = $('#mailbox-list'); if (!list) return;
+    list.innerHTML = accounts.length ? accounts.map((a) => `
+      <div class="row" style="border-bottom:1px solid var(--line);padding:6px 0">
+        <div><strong>${esc(a.label)}</strong> <span class="muted">${esc(a.email)}</span>
+          <span class="tag ${a.source === 'file' ? 'cold' : 'warm'}">${a.source}</span>
+          <div class="muted small">IMAP ${esc(a.imap.host)}:${a.imap.port} · SMTP ${esc(a.smtp.host)}:${a.smtp.port}</div></div>
+        ${a.source === 'app' ? `<button class="btn small ghost" onclick="removeMailbox('${a.id}')">Remove</button>` : '<span class="muted small">in accounts.json</span>'}
+      </div>`).join('') : '<div class="muted small">No mailboxes yet.</div>';
+  } catch (e) { /* not authed yet */ }
+}
+
+function mailboxBody() {
+  return {
+    id: $('#mb-id').value, label: $('#mb-email').value, email: $('#mb-email').value,
+    imap: { host: $('#mb-imaphost').value, port: $('#mb-imapport').value, secure: true, user: $('#mb-email').value, pass: $('#mb-pass').value },
+    smtp: { host: $('#mb-smtphost').value, port: $('#mb-smtpport').value, secure: $('#mb-smtpsecure').checked, user: $('#mb-email').value, pass: $('#mb-pass').value },
+  };
+}
+window.saveMailbox = async () => {
+  try { await api('/api/accounts', { method: 'POST', body: mailboxBody() }); $('#mb-status').textContent = '✅ Saved.'; await loadMailboxes(); await load(); toast('Mailbox added. 🐕'); }
+  catch (e) { $('#mb-status').textContent = 'Error: ' + e.message; }
+};
+window.testMailbox = async () => {
+  $('#mb-status').textContent = 'Testing IMAP + SMTP…';
+  try { const r = await api('/api/accounts/test', { method: 'POST', body: mailboxBody() });
+    $('#mb-status').textContent = `IMAP ${r.imap.ok ? '✅' : '❌ ' + r.imap.detail} · SMTP ${r.smtp.ok ? '✅' : '❌ ' + r.smtp.detail}`;
+  } catch (e) { $('#mb-status').textContent = 'Error: ' + e.message; }
+};
+window.removeMailbox = async (id) => {
+  if (!confirm('Remove this mailbox?')) return;
+  try { await api('/api/accounts/' + encodeURIComponent(id), { method: 'DELETE' }); await loadMailboxes(); await load(); toast('Removed.'); }
+  catch (e) { toast('Error: ' + e.message); }
+};
 
 window.setDashboardPassword = async () => {
   const password = $('#pw-new').value;

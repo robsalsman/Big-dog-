@@ -3,6 +3,7 @@ import { messages, deals, events, memories, drafts } from './db.js';
 import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
 import type { AccountsConfig, Deal, CalendarEvent, Draft } from './types.js';
+import { allAccounts } from './accounts.js';
 
 const NO_REPLY = /no-?reply|do-?not-?reply|notifications?@|mailer-daemon|postmaster|@.*\.(amazonaws|sendgrid|mailchimp)/i;
 
@@ -97,7 +98,7 @@ export async function triageNewMail(
         const { subject, body, rationale } = await brain.draftReply(m, dealForDraft, memory, messages.thread(m.threadId));
         const draft: Draft = {
           id: randomUUID().slice(0, 16),
-          accountId: m.accountId || accounts.accounts[0]?.id || 'demo',
+          accountId: m.accountId || allAccounts()[0]?.id || 'demo',
           inReplyTo: m.messageId,
           dealId,
           toEmails: m.fromEmail,

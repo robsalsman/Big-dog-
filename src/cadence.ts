@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { deals, drafts, memories } from './db.js';
 import type { AgentContext } from './agent/tools.js';
 import type { Draft } from './types.js';
+import { allAccounts } from './accounts.js';
 
 /**
  * The follow-up cadence engine. Sweeps open deals and, for any that have gone
@@ -12,7 +13,7 @@ export async function runCadenceSweep(ctx: AgentContext): Promise<string[]> {
   const today = new Date().toISOString().slice(0, 10);
   const staleMs = ctx.cfg.cadenceStaleDays * 86_400_000;
   const twoDaysAgo = new Date(Date.now() - 2 * 86_400_000).toISOString();
-  const accountId = ctx.accounts.accounts[0]?.id ?? 'demo';
+  const accountId = allAccounts()[0]?.id ?? 'demo';
   const created: string[] = [];
 
   for (const d of deals.all()) {

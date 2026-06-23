@@ -5,6 +5,7 @@ import type { BigDogBrain } from '../brain.js';
 import type { AppConfig } from '../config.js';
 import type { AccountsConfig, Deal, DealStage, Draft, CalendarEvent } from '../types.js';
 import { DEAL_STAGES } from '../types.js';
+import { allAccounts } from '../accounts.js';
 
 export interface AgentContext {
   cfg: AppConfig;
@@ -19,7 +20,7 @@ export interface AgentTool {
 }
 
 function defaultAccountId(ctx: AgentContext): string {
-  return ctx.accounts.accounts[0]?.id ?? 'demo';
+  return allAccounts()[0]?.id ?? 'demo';
 }
 
 function queueDraft(ctx: AgentContext, d: Partial<Draft> & { toEmails: string; subject: string; body: string }): string {

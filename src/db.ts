@@ -10,6 +10,7 @@ import type {
   Draft,
   Digest,
   DealStage,
+  Account,
 } from './types.js';
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
@@ -107,6 +108,11 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS mailaccounts (
+    id TEXT PRIMARY KEY,
+    json TEXT
   );
 
   CREATE INDEX IF NOT EXISTS idx_messages_date ON messages(date DESC);
@@ -338,6 +344,23 @@ export const settingsStore = {
     const out: Record<string, string> = {};
     for (const r of rows) out[r.key] = r.value;
     return out;
+  },
+};
+
+// ── Mail accounts added in-app (file accounts live in config/accounts.json) ─
+export const mailAccountsStore = {
+  all(): Account[] {
+    const rows = db.prepare('SELECT json FROM mailaccounts').all() as { json: string }[];
+    return rows.map((r) => JSON.parse(r.json) as Account);
+  },
+  set(account: Account) {
+    db.prepare('INSERT INTO mailaccounts (id, json) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(
+      account.id,
+      JSON.stringify(account),
+    );
+  },
+  delete(id: string) {
+    db.prepare('DELETE FROM mailaccounts WHERE id = ?').run(id);
   },
 };
 
