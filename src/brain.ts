@@ -242,6 +242,54 @@ export class BigDogBrain {
     }
   }
 
+  // ── Draft a personalized cold intro (campaign play) ───────────────────
+  async draftColdIntro(
+    p: { name: string; title: string; company: string },
+    research = '',
+    memory = '',
+  ): Promise<{ subject: string; body: string; rationale: string }> {
+    const first = p.name.split(/\s+/)[0] || 'there';
+    if (!this.provider.live) {
+      return {
+        subject: `Quick idea for ${p.company || 'your team'}`,
+        body:
+          `Hi ${first},\n\nI work with teams like ${p.company || 'yours'} and had a specific idea I think is worth 15 minutes. ` +
+          `Open to a quick call next week?\n\n${this.owner.signature}\n\nP.S. Not the right time? Just reply "no" and I'll close the loop.`,
+        rationale: 'Fallback cold intro (no model live).',
+      };
+    }
+    const schema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: { subject: { type: 'string' }, body: { type: 'string' }, rationale: { type: 'string' } },
+      required: ['subject', 'body', 'rationale'],
+    };
+    const ctx =
+      (research ? `\n\nWhat I found about them:\n${research}\n` : '') +
+      (memory ? `\n\nWhat I remember about this contact:\n${memory}\n` : '');
+    try {
+      const out = await this.provider.complete({
+        system: this.system,
+        maxTokens: 1100,
+        schema,
+        user:
+          `Write a SHORT personalized cold intro email to ${p.name}${p.title ? `, ${p.title}` : ''}` +
+          `${p.company ? ` at ${p.company}` : ''} — as me, in my voice.${ctx}\n\n` +
+          `Rules: 3–5 sentences. Open with a specific, genuine hook (use the research — no generic flattery). ` +
+          `Make ONE clear, low-friction ask (a quick call). Never sound like a mass blast. Sign off as me. ` +
+          `End with a one-line P.S. opt-out: 'Not the right time? Just reply "no" and I'll close the loop.' ` +
+          `Respond with ONLY the JSON object {subject, body, rationale}.`,
+      });
+      return JSON.parse(extractJson(out)) as { subject: string; body: string; rationale: string };
+    } catch {
+      return {
+        subject: `Quick idea for ${p.company || 'your team'}`,
+        body: `Hi ${first},\n\nHad a specific idea for ${p.company || 'your team'} — worth a quick call next week?\n\n${this.owner.signature}\n\nP.S. Not the right time? Just reply "no" and I'll close the loop.`,
+        rationale: 'Fallback cold intro (draft error).',
+      };
+    }
+  }
+
   // ── Morning "What's up, Big Dog!?" digest ─────────────────────────────
   async digest(hotMessages: Message[], deals: Deal[], events: CalendarEvent[]): Promise<string> {
     if (!this.provider.live) return fallbackDigest(this.owner, hotMessages, deals, events);

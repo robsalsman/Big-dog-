@@ -427,6 +427,21 @@ function renderProspect() {
         <button class="btn small good" onclick="enrichCsv(true)">Enrich + add all to pipeline</button>
       </div>
       <div id="csv-out" style="margin-top:12px"></div>
+    </div>
+
+    <div class="card" style="border-left:3px solid var(--accent)">
+      <strong>🚀 Run a campaign</strong>
+      <div class="muted small" style="margin:4px 0 10px">
+        The one-shot play: take the list above, fill in emails, research the top few, and draft a personalized cold intro to each —
+        all queued in <strong>Drafts</strong> for your approval (never sent automatically).
+      </div>
+      <div class="actions" style="align-items:center">
+        <label class="small muted"><input type="checkbox" id="camp-pipeline" checked /> Add all to pipeline</label>
+        <label class="small muted"><input type="checkbox" id="camp-draft" checked /> Draft intros</label>
+        <label class="small muted">Research top <input type="number" id="camp-research" value="5" min="0" max="15" style="width:54px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:3px" /></label>
+        <button class="btn small primary" onclick="runCampaign()">🐕 Run campaign</button>
+      </div>
+      <div id="camp-out" style="margin-top:12px"></div>
     </div>`;
   $('#prospect-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') findLeads(); });
   $('#csv-file').addEventListener('change', (e) => {
@@ -460,6 +475,34 @@ window.enrichCsv = async (save) => {
         ${rows}</table></div>`;
     window.__enriched = r.rows;
     if (save) await load();
+  } catch (e) { out.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+};
+
+window.runCampaign = async () => {
+  const csv = $('#csv-text').value.trim();
+  if (!csv) { toast('Paste or upload a CSV first.'); return; }
+  const body = {
+    csv,
+    verify: $('#csv-verify').checked,
+    addToPipeline: $('#camp-pipeline').checked,
+    draft: $('#camp-draft').checked,
+    research: Number($('#camp-research').value || 0),
+  };
+  const out = $('#camp-out');
+  out.innerHTML = '<div class="muted">🐕 Running the play — enriching, researching, drafting… this can take a minute.</div>';
+  try {
+    const r = await api('/api/campaign/run', { method: 'POST', body });
+    const s = r.summary;
+    out.innerHTML = `
+      <div class="card">
+        <strong>🐕 Campaign done.</strong>
+        <div class="small" style="margin-top:6px">
+          ${s.total} contacts · ${s.withEmail} with email · ${s.added} added to pipeline · ${s.researched} researched · <strong>${s.drafted} intros drafted</strong>.
+        </div>
+        <div class="actions"><button class="btn small primary" onclick="switchTab('drafts')">Review ${s.drafted} drafts →</button></div>
+      </div>`;
+    await load();
+    toast(`Drafted ${s.drafted} intros — review in Drafts. 🐕`);
   } catch (e) { out.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
 };
 

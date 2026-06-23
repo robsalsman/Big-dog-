@@ -74,6 +74,12 @@ Beyond triage and drafting, Big Dog is a real agent:
   per domain, resolving company → domain via the web when needed), then exports the
   enriched CSV or adds everyone to the pipeline. Optional per-list SMTP verification.
   (Prospect tab → Import a lead list.)
+- **Campaign play** — the one-shot move: take a lead list → fill in emails → research
+  the top names → draft a **personalized cold intro to each** (with an opt-out line),
+  all queued in Drafts for your approval. Optionally drops everyone into the pipeline.
+  (Prospect tab → Run a campaign.)
+
+See [ROADMAP.md](ROADMAP.md) for what's next on the path to a complete product.
 
 ---
 

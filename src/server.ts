@@ -6,6 +6,7 @@ import { messages, deals, events, drafts, memories } from './db.js';
 import { runAgent } from './agent/agent.js';
 import { runCadenceSweep } from './cadence.js';
 import { findProspects, saveProspectAsDeal, activeProvider, findContactEmail, parseCsv, enrichRows } from './prospect.js';
+import { runCampaign } from './campaign.js';
 import { loadSettings, saveSettings, buildProvider, publicSettings, testProvider } from './settings.js';
 import type { Prospect } from './types.js';
 import { syncAll } from './mail/ingest.js';
@@ -312,6 +313,24 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
         }
       }
       res.json({ count: enriched.length, rows: enriched });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // The campaign play: enrich a list → (research top N) → draft intros to all.
+  app.post('/api/campaign/run', async (req, res) => {
+    const rows = req.body?.csv ? parseCsv(String(req.body.csv)) : (req.body?.rows as Record<string, string>[]) ?? [];
+    if (!rows.length) return res.status(400).json({ error: 'no rows — paste a CSV with a header row' });
+    try {
+      const accountId = accountsCfg.accounts[0]?.id ?? 'demo';
+      const result = await runCampaign(rows, brain, accountId, {
+        verify: !!req.body?.verify,
+        addToPipeline: req.body?.addToPipeline !== false,
+        research: Number(req.body?.research ?? 0),
+        draft: req.body?.draft !== false,
+      });
+      res.json(result);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
