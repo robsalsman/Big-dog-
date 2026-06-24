@@ -88,7 +88,7 @@ export async function triageNewMail(
       events.upsert(evt);
     }
 
-    messages.setAnalysis(m.id, analysis.priority, analysis.summary, dealId);
+    messages.setAnalysis(m.id, analysis.priority, analysis.summary, dealId, analysis.category ?? null);
 
     // Real-time alert when a hot lead lands.
     if (analysis.priority === 'hot' && m.fromEmail && !NO_REPLY.test(m.fromEmail)) {
@@ -100,6 +100,7 @@ export async function triageNewMail(
     // Auto-draft: have a reply waiting for any hot/warm thread worth answering.
     if (
       cfg.autoDraft &&
+      analysis.needsReply && // only draft for genuine emails (not invoices/receipts/promos)
       (analysis.priority === 'hot' || analysis.priority === 'warm') &&
       m.fromEmail &&
       !NO_REPLY.test(m.fromEmail) &&

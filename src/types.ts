@@ -50,6 +50,7 @@ export interface Message {
   dealId: string | null;
   priority: 'hot' | 'warm' | 'cold' | null;
   summary: string | null;
+  category?: string | null;
   analyzed: 0 | 1;
 }
 
@@ -159,10 +160,14 @@ export interface Prospect {
   notes: string;
 }
 
+export type MessageCategory = 'reply' | 'fyi' | 'promotion' | 'invoice' | 'receipt' | 'notification' | 'spam';
+
 /** What Claude returns when triaging a single inbound message. */
 export interface MessageAnalysis {
   priority: 'hot' | 'warm' | 'cold';
   summary: string;
+  category: MessageCategory; // what KIND of email this is
+  needsReply: boolean; // a real person expecting a response (vs receipts/promos/notifications)
   isSalesOpportunity: boolean;
   deal?: {
     title: string;

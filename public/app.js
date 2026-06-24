@@ -118,6 +118,7 @@ function messageCard(m) {
           ${m.summary ? `<div class="muted small">🐕 ${esc(m.summary)}</div>` : ''}
         </div>
         <div style="text-align:right;white-space:nowrap">
+          ${m.category && m.category !== 'reply' ? `<span class="tag" title="Big Dog won't auto-reply to this">${esc(m.category)}</span> ` : ''}
           <span class="tag ${p}">${p}</span>
           <div class="muted small">${fmtDate(m.date)}</div>
         </div>

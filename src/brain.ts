@@ -265,6 +265,8 @@ export class BigDogBrain {
       properties: {
         priority: { type: 'string', enum: ['hot', 'warm', 'cold'] },
         summary: { type: 'string' },
+        category: { type: 'string', enum: ['reply', 'fyi', 'promotion', 'invoice', 'receipt', 'notification', 'spam'] },
+        needsReply: { type: 'boolean' },
         isSalesOpportunity: { type: 'boolean' },
         deal: {
           type: 'object',
@@ -292,7 +294,7 @@ export class BigDogBrain {
           required: ['title', 'proposedStart', 'durationMinutes', 'location'],
         },
       },
-      required: ['priority', 'summary', 'isSalesOpportunity', 'isMeetingRequest'],
+      required: ['priority', 'summary', 'category', 'needsReply', 'isSalesOpportunity', 'isMeetingRequest'],
     };
 
     const context = openDeal
@@ -309,7 +311,11 @@ export class BigDogBrain {
           `Triage this inbound email like the sharp SDR you are. ${context}${memoryBlock}\n\n` +
           `From: ${m.fromName} <${m.fromEmail}>\nSubject: ${m.subject}\nDate: ${m.date}\n\n${m.body.slice(0, 4000)}\n\n` +
           `Decide its priority (hot = real buying signal or time-sensitive, warm = worth a reply, cold = FYI/noise), ` +
-          `a one-line summary, whether it's a sales opportunity (and the deal fields if so), and whether it's a meeting request. ` +
+          `a one-line summary, and classify what KIND of email it is via "category": ` +
+          `reply (a real person who expects a response), fyi (informational, no response needed), promotion (marketing/newsletter/pitch), ` +
+          `invoice (a bill/payment due), receipt (a payment confirmation/statement), notification (automated system/app alert), or spam. ` +
+          `Set "needsReply" true ONLY when a human is genuinely waiting on a response from me — false for receipts, invoices, promotions, notifications, and most FYIs. ` +
+          `Also decide whether it's a sales opportunity (and the deal fields if so), and whether it's a meeting request. ` +
           `Respond with ONLY the JSON object.`,
       });
       return JSON.parse(extractJson(out)) as MessageAnalysis;
@@ -542,9 +548,18 @@ function fallbackAnalysis(m: Message): MessageAnalysis {
   const text = `${m.subject} ${m.body}`.toLowerCase();
   const meeting = /\b(meet|call|demo|calendar|available|schedule|zoom|sync)\b/.test(text);
   const buying = /\b(pricing|quote|proposal|interested|budget|contract|buy|purchase|trial)\b/.test(text);
+  const from = m.fromEmail.toLowerCase();
+  const noReply = /no-?reply|do-?not-?reply|notifications?@|mailer-daemon|postmaster/.test(from);
+  const invoice = /\b(invoice|amount due|payment due|past due|bill)\b/.test(text);
+  const receipt = /\b(receipt|payment received|your order|statement|confirmation #)\b/.test(text);
+  const promo = /\b(unsubscribe|newsletter|% off|sale ends|webinar|free trial|limited time)\b/.test(text);
+  const category = invoice ? 'invoice' : receipt ? 'receipt' : promo || noReply ? (noReply ? 'notification' : 'promotion') : meeting || buying ? 'reply' : 'fyi';
+  const needsReply = (category === 'reply') && !noReply;
   return {
     priority: buying ? 'hot' : meeting ? 'warm' : 'cold',
     summary: m.subject || `Message from ${m.fromName}`,
+    category,
+    needsReply,
     isSalesOpportunity: buying,
     deal: buying
       ? {

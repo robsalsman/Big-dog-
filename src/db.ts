@@ -191,6 +191,12 @@ db.exec(`
   if (!cols.some((c) => c.name === 'ccEmails')) db.exec('ALTER TABLE drafts ADD COLUMN ccEmails TEXT');
 }
 
+// Migration: add messages.category (email kind from triage).
+{
+  const cols = db.prepare('PRAGMA table_info(messages)').all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'category')) db.exec('ALTER TABLE messages ADD COLUMN category TEXT');
+}
+
 // Migration: add sequences.autoSend.
 {
   const t = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sequences'").get();
@@ -243,10 +249,10 @@ export const messages = {
       .prepare('SELECT * FROM messages WHERE analyzed = 0 ORDER BY date DESC LIMIT ?')
       .all(limit) as Message[];
   },
-  setAnalysis(id: string, priority: string, summary: string, dealId: string | null) {
+  setAnalysis(id: string, priority: string, summary: string, dealId: string | null, category: string | null = null) {
     db.prepare(
-      'UPDATE messages SET analyzed = 1, priority = ?, summary = ?, dealId = ? WHERE id = ?',
-    ).run(priority, summary, dealId, id);
+      'UPDATE messages SET analyzed = 1, priority = ?, summary = ?, dealId = ?, category = ? WHERE id = ?',
+    ).run(priority, summary, dealId, category, id);
   },
   markRead(id: string) {
     db.prepare('UPDATE messages SET unread = 0 WHERE id = ?').run(id);
