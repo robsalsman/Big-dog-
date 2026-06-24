@@ -960,7 +960,7 @@ function renderProspect() {
     </div>
     <div class="muted small" style="margin-bottom:12px">
       Describe your ideal customer — title, industry, company stage, location, or a domain.
-      ${prov.name === 'web' ? 'Big Dog uses Claude\'s live web research to find real prospects from public data (verify before outreach). Give it 20–40s.' : 'Using Apollo.io structured search.'}
+      ${prov.name === 'web' ? 'Big Dog uses Claude\'s live web research to find real prospects that match your brief — and only shows ones it can actually email (others are filtered out). Give it 20–40s.' : 'Using Apollo.io structured search.'}
     </div>
     <div class="chat-input">
       <input id="prospect-q" placeholder="e.g. Heads of RevOps at Series B SaaS in the US" />

@@ -216,10 +216,31 @@ export async function enrichRows(
  */
 export async function findProspects(criteria: string, cfg: AppConfig, brain: BigDogBrain): Promise<Prospect[]> {
   const useApollo = cfg.prospectProvider === 'apollo' || (cfg.prospectProvider === 'auto' && !!cfg.apolloKey);
-  if (useApollo && cfg.apolloKey) {
-    return apolloSearch(cfg.apolloKey, criteria);
+  const raw = useApollo && cfg.apolloKey ? await apolloSearch(cfg.apolloKey, criteria) : await brain.prospect(criteria);
+  return ensureReachable(raw);
+}
+
+/**
+ * A prospect is only useful if Big Dog can actually email it. Keep those with an
+ * email; for the rest, derive a likely address from a full name + company domain;
+ * drop anyone with no email and no way to infer one (they can't be campaigned).
+ */
+function ensureReachable(list: Prospect[]): Prospect[] {
+  const out: Prospect[] = [];
+  for (const p of list) {
+    if (p.email && p.email.includes('@')) { out.push(p); continue; }
+    const domain = p.domain ? domainFromUrl(p.domain) ?? p.domain : '';
+    const parts = (p.name || '').trim().split(/\s+/).filter(Boolean);
+    if (domain && parts.length >= 2) {
+      const g = guessEmail(parts[0]!, parts.slice(1).join(' '), domain);
+      if (g.email) {
+        out.push({ ...p, email: g.email, notes: `${p.notes ? p.notes + ' · ' : ''}email: ${g.confidence} guess (verify before send)` });
+        continue;
+      }
+    }
+    // No email and nothing to infer from → skip (can't be added to a campaign).
   }
-  return brain.prospect(criteria);
+  return out;
 }
 
 export function activeProvider(cfg: AppConfig): { name: string; ready: boolean } {

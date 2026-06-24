@@ -82,20 +82,24 @@ export class AnthropicProvider implements LLMProvider {
   async webProspect(criteria: string): Promise<string> {
     const res = await this.client.messages.create({
       model: this.model,
-      max_tokens: 2500,
+      max_tokens: 3000,
       messages: [
         {
           role: 'user',
           content:
-            `Find real B2B sales prospects matching this brief, using web search: ${criteria}\n\n` +
-            `Return ONLY a JSON array (no prose) of up to 8 objects, each with keys: ` +
-            `"name", "title", "company", "domain" (company email domain like "acme.com" or ""), ` +
-            `"email" (public/inferred or ""), "linkedin" (URL or ""), ` +
-            `"location" (or ""), "notes" (one line on why they fit / source). ` +
-            `Only include people/companies you actually found evidence for. Do not invent emails — leave "" if unknown.`,
+            `You are an elite B2B prospect researcher. Find REAL prospects that STRICTLY satisfy EVERY constraint in this brief — ` +
+            `honor the location, company size/scale, industry, the exact role/seniority, and the stated product fit. Discard anyone who doesn't clearly match.\n\n` +
+            `BRIEF: ${criteria}\n\n` +
+            `Prioritize the decision-maker (owner/founder/CEO, or the named role). For each, find a CONTACT EMAIL — the person's work email if it's public, ` +
+            `otherwise the company's general email (info@/contact@). ALWAYS include the company's email DOMAIN (e.g. "acme.com") so an address can be derived.\n\n` +
+            `Return ONLY a JSON array (no prose) of up to 12 objects with keys: ` +
+            `"name", "title", "company", "domain" (company email domain or ""), "email" (best real contact email or ""), ` +
+            `"linkedin" (URL or ""), "location" (or ""), "notes" (one line: why they fit the brief + how you found the email). ` +
+            `CRITICAL: only include a prospect if it can actually be contacted — it must have a real email OR (a company domain AND a full person name so an address can be inferred). ` +
+            `Skip anyone with no domain and no email. Never fabricate a specific email — leave "email":"" if unsure, but still give the "domain".`,
         },
       ],
-      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 6 }],
+      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 8 }],
     } as Anthropic.MessageCreateParamsNonStreaming);
 
     return res.content
