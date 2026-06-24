@@ -88,7 +88,7 @@ export async function triageNewMail(
       events.upsert(evt);
     }
 
-    messages.setAnalysis(m.id, analysis.priority, analysis.summary, dealId, analysis.category ?? null);
+    messages.setAnalysis(m.id, analysis.priority, analysis.summary, dealId, analysis.category ?? null, analysis.isMeetingRequest ? 1 : 0);
 
     // Real-time alert when a hot lead lands.
     if (analysis.priority === 'hot' && m.fromEmail && !NO_REPLY.test(m.fromEmail)) {

@@ -51,6 +51,7 @@ export interface Message {
   priority: 'hot' | 'warm' | 'cold' | null;
   summary: string | null;
   category?: string | null;
+  meetingReq?: 0 | 1; // triage flagged this as a meeting request / interested reply
   analyzed: 0 | 1;
 }
 

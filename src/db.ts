@@ -220,6 +220,12 @@ db.exec(`
   if (!cols.some((c) => c.name === 'zoomMeetingId')) db.exec('ALTER TABLE events ADD COLUMN zoomMeetingId TEXT');
 }
 
+// Migration: add messages.meetingReq (one-tap "Confirm & book").
+{
+  const cols = db.prepare('PRAGMA table_info(messages)').all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'meetingReq')) db.exec('ALTER TABLE messages ADD COLUMN meetingReq INTEGER DEFAULT 0');
+}
+
 // Migration: add sequences.autoSend.
 {
   const t = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sequences'").get();
@@ -272,10 +278,10 @@ export const messages = {
       .prepare('SELECT * FROM messages WHERE analyzed = 0 ORDER BY date DESC LIMIT ?')
       .all(limit) as Message[];
   },
-  setAnalysis(id: string, priority: string, summary: string, dealId: string | null, category: string | null = null) {
+  setAnalysis(id: string, priority: string, summary: string, dealId: string | null, category: string | null = null, meetingReq = 0) {
     db.prepare(
-      'UPDATE messages SET analyzed = 1, priority = ?, summary = ?, dealId = ?, category = ? WHERE id = ?',
-    ).run(priority, summary, dealId, category, id);
+      'UPDATE messages SET analyzed = 1, priority = ?, summary = ?, dealId = ?, category = ?, meetingReq = ? WHERE id = ?',
+    ).run(priority, summary, dealId, category, meetingReq, id);
   },
   markRead(id: string) {
     db.prepare('UPDATE messages SET unread = 0 WHERE id = ?').run(id);

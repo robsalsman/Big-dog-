@@ -128,6 +128,7 @@ function messageCard(m) {
       <div class="actions">
         <button class="btn small ghost" onclick="toggleBody('${m.id}')">Read</button>
         <button class="btn small" onclick="viewThread('${m.threadId}','${m.id}')">🧵 Thread</button>
+        ${m.meetingReq ? `<button class="btn small good" onclick="bookMeeting('${m.id}')" title="Create the Zoom + calendar invite and send the confirmation">📅 Confirm &amp; book</button>` : ''}
         <button class="btn small primary" onclick="draftReply('${m.id}')">🐕 Draft my reply</button>
         ${(m.toEmails && m.toEmails.split(/[,;]/).length > 1) ? `<button class="btn small" onclick="draftReply('${m.id}', true)" title="Reply to everyone on the thread">↩↩ Reply all</button>` : ''}
         <button class="btn small" onclick="research('${m.id}','${esc(m.fromName)} ${esc(m.fromEmail)}')">🔎 Research</button>
@@ -198,6 +199,17 @@ async function runSearch() {
 }
 
 window.clearSearch = () => { inboxQuery = ''; renderInbox(); };
+
+window.bookMeeting = async (msgId) => {
+  toast('📅 Booking the meeting…');
+  try {
+    const r = await api('/api/messages/' + encodeURIComponent(msgId) + '/book', { method: 'POST' });
+    await load();
+    const when = r.when ? fmtDate(r.when) : '';
+    if (r.sent) toast(`Booked for ${when} — confirmation sent. 🐕`);
+    else toast(`Booked for ${when} — confirmation queued in Drafts.`);
+  } catch (e) { toast('Error: ' + e.message); }
+};
 
 window.dismissDraft = async (msgId) => {
   try {
