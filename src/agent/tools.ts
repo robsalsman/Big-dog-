@@ -2,6 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { messages, deals, events, drafts, memories } from '../db.js';
 import { findContactEmail } from '../prospect.js';
 import { browserConfigured } from '../browser.js';
+import { sendMail } from '../mail/send.js';
+import { recordSentMessage } from '../sentmail.js';
+import { runAutopilot } from '../autopilot.js';
+import { logActivity } from '../activity.js';
 import type { BigDogBrain } from '../brain.js';
 import type { AppConfig } from '../config.js';
 import type { AccountsConfig, Deal, DealStage, Draft, CalendarEvent } from '../types.js';
@@ -205,6 +209,36 @@ export function buildToolset(ctx: AgentContext): AgentTool[] {
         if (!args.name || !args.domain) return 'Need {name, domain}.';
         const r = await findContactEmail({ name: String(args.name), domain: String(args.domain) }, ctx.brain);
         return `${r.email} — ${r.confidence} (${r.method})`;
+      },
+    },
+    {
+      name: 'send_email',
+      description: 'Compose and SEND an email NOW in the owner\'s voice (not queued). Use when the owner explicitly says to send it. args: {to, subject, body}. To leave it for approval instead, use queue_email.',
+      async run(args) {
+        const to = String(args.to ?? '').trim();
+        if (!to.includes('@') || !args.body) return 'Need {to, body}.';
+        const subject = String(args.subject ?? '(no subject)');
+        const body = String(args.body);
+        const account = allAccounts()[0];
+        if (!account) { const id = queueDraft(ctx, { toEmails: to, subject, body, rationale: 'Composed by Big Dog (no live mailbox — queued).' }); return `No mailbox connected, so I queued it for approval (draft ${id}).`; }
+        try {
+          await sendMail(account, { to, subject, body });
+          recordSentMessage({ accountId: account.id, fromName: account.label, fromEmail: account.email, toEmails: to, subject, body });
+          logActivity('send', `Sent email to ${to} (operator): "${subject}"`);
+          return `Sent to ${to}: "${subject}".`;
+        } catch (err) {
+          const id = queueDraft(ctx, { toEmails: to, subject, body, rationale: 'Send failed — queued for approval.' });
+          return `Send failed (${(err as Error).message}); queued as draft ${id} instead.`;
+        }
+      },
+    },
+    {
+      name: 'start_campaign',
+      description: 'Launch a full AUTONOMOUS outreach campaign toward a customer type / goal (sources leads, researches each, sends personalized multi-touch outreach + follow-ups). Use for "start a campaign", "get me N meetings with…", "go after…". args: {goal, fullyAutomate?}.',
+      async run(args) {
+        if (!args.goal) return 'Need {goal}.';
+        const r = await runAutopilot(String(args.goal), { fullyAutomate: args.fullyAutomate !== false }, ctx.brain, ctx.cfg);
+        return `Campaign "${r.sequenceName}" launched: sourced ${r.found} leads, ${r.withEmail} with email, researched ${r.researched}, enrolled ${r.enrolled}, ${r.firstTouches} first touch(es) (${r.mode}). ${r.notes.join(' ')}`;
       },
     },
   ];

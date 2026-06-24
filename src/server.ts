@@ -71,10 +71,21 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const owner = loadTwilioCreds().ownerMobile;
     if (!owner || digits(from) !== digits(owner)) return xml(''); // ignore anyone but the owner
     try {
-      return xml(await handleOwnerSms(body, brain, cfg));
+      const quick = await handleOwnerSms(body, brain, cfg);
+      if (quick !== null) return xml(quick);
     } catch (err) {
       return xml(`Error: ${(err as Error).message}`);
     }
+    // Free-form: acknowledge now, run the operator agent, then text the result.
+    void (async () => {
+      try {
+        const run = await runAgent(body, agentCtx);
+        await sendSms(`🐕 ${run.final}`.slice(0, 600)).catch(() => {});
+      } catch (err) {
+        await sendSms(`Hit a snag on that: ${(err as Error).message}`.slice(0, 300)).catch(() => {});
+      }
+    })();
+    return xml("🐕 On it — I'll text you when it's done.");
   });
 
   // Parse cookies for auth.

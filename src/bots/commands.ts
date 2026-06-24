@@ -30,7 +30,8 @@ const HELP = [
   '• /today — what\'s on the calendar',
   '• /help — this',
   '',
-  'Or just talk to me — ask anything about your deals, your day, or who\'s going cold.',
+  'Or just tell me what to do in plain English — "email Jane at Acme that we\'re on for Tuesday",',
+  '"start a campaign to book 10 meetings with security guard company owners", "who\'s going cold?" — and I\'ll do it.',
 ].join('\n');
 
 function fmtDeals(): string {
@@ -128,6 +129,9 @@ export async function routeMessage(rawText: string, deps: BotDeps): Promise<stri
     return `🐕 Synced ${newMail} new message(s) and worked ${triaged}. ${accts.length ? '' : '(No mailboxes configured yet.)'}`;
   }
 
-  // Default: chat with the clone.
-  return deps.brain.chat(text, deals.all(), messages.recent(40), events.upcoming());
+  // Default: hand free-form text to the operator agent so Big Dog actually DOES
+  // what you ask (send an email, start a campaign, schedule, research…). It
+  // answers plain questions directly too.
+  const run = await runAgent(text, deps);
+  return `🐕 ${run.final}`;
 }

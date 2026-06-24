@@ -50,8 +50,10 @@ export async function runAgent(goal: string, ctx: AgentContext): Promise<AgentRu
     `  {"thought": "...", "tool": "<tool name>", "args": { ... }}\n` +
     `or finish:\n` +
     `  {"thought": "...", "final": "<summary of what you did for the owner>"}\n\n` +
-    `Rules: take real actions, don't just describe them. Email is always queued for the owner's approval. ` +
-    `Stop and return "final" as soon as the goal is met. Don't repeat a tool call that already succeeded.`;
+    `Rules: take real actions, don't just describe them. If the owner clearly says to SEND an email, use send_email; ` +
+    `otherwise use queue_email/draft_reply to leave it for approval. For "start a campaign" / "get me N meetings with…" goals, use start_campaign. ` +
+    `If the request is just a question, answer it directly in "final" (use the read tools if needed). ` +
+    `Stop and return "final" (a short, friendly summary for the owner) as soon as the goal is met. Don't repeat a tool call that already succeeded.`;
 
   const transcript: string[] = [];
 

@@ -13,12 +13,15 @@ import type { Draft } from './types.js';
 const HELP = 'Text me: YES (book top of queue) · a time · NO (skip) · DRAFT (reply to newest lead) · SEND (send newest draft) · STATUS · BRIEF · HELP. 🐕';
 
 /**
- * Run the whole business from your phone. Parses an owner SMS into an action and
- * returns the reply text. Gated to the owner's number by the caller.
+ * Quick-command parser for an owner SMS. Returns the reply text for recognized
+ * fast commands (book/skip/status/brief/draft/send/help), or null when the text
+ * is free-form — the caller then hands it to the operator agent. Gated to the
+ * owner's number by the caller.
  */
-export async function handleOwnerSms(body: string, brain: BigDogBrain, cfg: AppConfig): Promise<string> {
+export async function handleOwnerSms(body: string, brain: BigDogBrain, cfg: AppConfig): Promise<string | null> {
   const lc = body.toLowerCase().trim();
-  if (!lc || /^(help|commands|\?|menu)$/.test(lc)) return HELP;
+  if (/^(help|commands|\?|menu)$/.test(lc)) return HELP + '\n\nOr just tell me what to do in plain English.';
+  if (!lc) return HELP;
 
   // Status snapshot.
   if (/^(status|recap|summary|stats)\b/.test(lc)) {
@@ -73,32 +76,38 @@ export async function handleOwnerSms(body: string, brain: BigDogBrain, cfg: AppC
     }
   }
 
-  // Default: the booking flow on the Ready-to-book queue.
+  // Booking flow — only when there's a queue AND the reply reads like yes/no/a time.
   const queue = messages.meetingRequests();
-  if (/^(no|skip|n|not now|pass)\b/.test(lc)) {
-    if (queue[0]) { messages.setMeetingReq(queue[0].id, 0); const left = messages.meetingRequests(); return `Skipped ${queue[0].fromName || 'that one'}.${left[0] ? ` Next: ${left[0].fromName || left[0].fromEmail}. Reply YES.` : ' Queue clear. 🐕'}`; }
-    return 'Nothing pending to skip.';
+  if (queue.length) {
+    if (/^(no|skip|n|not now|pass)\b/.test(lc)) {
+      messages.setMeetingReq(queue[0]!.id, 0);
+      const left = messages.meetingRequests();
+      return `Skipped ${queue[0]!.fromName || 'that one'}.${left[0] ? ` Next: ${left[0].fromName || left[0].fromEmail}. Reply YES.` : ' Queue clear. 🐕'}`;
+    }
+    const isYes = /^(y|yes|yep|yeah|ok|okay|book|confirm|sure|do it|go)\b/.test(lc);
+    const timeish = /\b(today|tomorrow|tonight|mon|tue|wed|thu|fri|sat|sun|noon|am|pm|next week|\d{1,2}:\d{2}|\d{1,2}\s?(?:am|pm))\b/i.test(lc);
+    if (isYes || timeish) {
+      let whenISO: string | undefined;
+      if (!isYes && brain.live) {
+        try {
+          const out = await brain.raw(
+            `Parse a meeting time from "${body}" as a single ISO 8601 datetime (next occurrence; business hours if vague). Return ONLY JSON {"whenISO":"..."} or {"whenISO":null}. NOW: ${new Date().toISOString()}`,
+            { type: 'object', additionalProperties: false, properties: { whenISO: { type: ['string', 'null'] } }, required: ['whenISO'] }, 150,
+          );
+          const w = JSON.parse(out.slice(out.indexOf('{'), out.lastIndexOf('}') + 1)).whenISO;
+          if (w) whenISO = w;
+        } catch { /* treat as yes */ }
+      }
+      try {
+        const r = await bookFromMessage(queue[0]!, { whenISO }, brain, cfg);
+        const next = messages.meetingRequests()[0];
+        return `✅ Booked ${r.contactName} for ${r.whenLabel}${r.join ? ' (Zoom + invite sent)' : r.sent ? ' (invite sent)' : ' (confirmation queued)'}.${next ? ` Next: ${next.fromName || next.fromEmail}. Reply YES.` : ' Queue clear. 🐕'}`;
+      } catch (err) {
+        return `Couldn't book that: ${(err as Error).message}`;
+      }
+    }
   }
-  const target = queue[0];
-  if (!target) return `Nothing waiting in your Ready-to-book queue. ${HELP}`;
 
-  let whenISO: string | undefined;
-  const isYes = /^(y|yes|yep|yeah|ok|okay|book|confirm|sure|do it|go)\b/.test(lc);
-  if (!isYes && brain.live) {
-    try {
-      const out = await brain.raw(
-        `Parse a meeting time from "${body}" as a single ISO 8601 datetime (next occurrence; business hours if vague). Return ONLY JSON {"whenISO":"..."} or {"whenISO":null}. NOW: ${new Date().toISOString()}`,
-        { type: 'object', additionalProperties: false, properties: { whenISO: { type: ['string', 'null'] } }, required: ['whenISO'] }, 150,
-      );
-      const w = JSON.parse(out.slice(out.indexOf('{'), out.lastIndexOf('}') + 1)).whenISO;
-      if (w) whenISO = w; else if (!isYes) return `Didn't catch a command. ${HELP}`;
-    } catch { /* treat as yes */ }
-  }
-  try {
-    const r = await bookFromMessage(target, { whenISO }, brain, cfg);
-    const next = messages.meetingRequests()[0];
-    return `✅ Booked ${r.contactName} for ${r.whenLabel}${r.join ? ' (Zoom + invite sent)' : r.sent ? ' (invite sent)' : ' (confirmation queued)'}.${next ? ` Next: ${next.fromName || next.fromEmail}. Reply YES.` : ' Queue clear. 🐕'}`;
-  } catch (err) {
-    return `Couldn't book that: ${(err as Error).message}`;
-  }
+  // Not a quick command — let the operator agent handle the free-form request.
+  return null;
 }
