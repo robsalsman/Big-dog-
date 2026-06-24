@@ -1285,8 +1285,10 @@ async function renderSettings() {
     <div class="card" style="margin-top:22px">
       <strong>📱 Text &amp; calls (Twilio)</strong> <span id="twilio-state" class="tag">checking…</span>
       <div class="muted small" style="margin:4px 0 8px">
-        Lets Big Dog text/call you (hot-lead alerts, the morning brief) and reach customers from their contact card.
+        Lets Big Dog text/call you (hot-lead alerts, the morning brief, "ready to book" pings) and reach customers from their contact card.
         From the Twilio Console: Account SID + Auth Token, and your Twilio phone number.
+        <br><strong>Reply-to-book:</strong> in Twilio → your number → Messaging, set the incoming webhook to
+        <code id="tw-webhook">https://bigdog.builda.company/twilio/inbound</code> — then a text back "YES" (or a time) books the top of your queue.
       </div>
       <input class="subj" id="tw-accountSid" placeholder="Account SID (AC…)" style="width:100%" />
       <input class="subj" id="tw-authToken" type="password" placeholder="Auth Token" style="width:100%" />

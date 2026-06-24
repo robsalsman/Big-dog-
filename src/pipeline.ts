@@ -97,6 +97,12 @@ export async function triageNewMail(
       void notifyAll(line);
     }
 
+    // Ready-to-book alert: someone wants to meet — reply YES (from your phone) to book.
+    if (analysis.isMeetingRequest && analysis.needsReply && m.fromEmail && !NO_REPLY.test(m.fromEmail)) {
+      logActivity('book', `Ready to book — ${m.fromName}: ${analysis.summary || m.subject}`);
+      void notifyAll(`📅 ${m.fromName} wants to meet — ${analysis.summary || m.subject}. Reply YES to book it (or send a time).`);
+    }
+
     // Auto-draft: have a reply waiting for any hot/warm thread worth answering.
     if (
       cfg.autoDraft &&

@@ -28,7 +28,8 @@ import { generateDigest } from './digest.js';
 import { exportIcs } from './calendar.js';
 import { calcomConfigured, syncCalcomBookings } from './calcom.js';
 import { zoomConfigured, createZoomMeeting, saveZoomCreds, publicZoom, testZoom, getMeetingTranscript } from './zoom.js';
-import { twilioConfigured, saveTwilioCreds, publicTwilio, testTwilio, sendSms, makeCall } from './twilio.js';
+import { twilioConfigured, saveTwilioCreds, publicTwilio, testTwilio, sendSms, makeCall, loadTwilioCreds } from './twilio.js';
+import { bookFromMessage } from './booking.js';
 import { browserConfigured, browserReady } from './browser.js';
 import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
@@ -42,10 +43,51 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   const app = express();
   app.set('trust proxy', 1); // behind a TLS reverse proxy (Caddy/nginx) in production
   app.use(express.json({ limit: '25mb' }));
+  app.use(express.urlencoded({ extended: false })); // Twilio webhooks post form-encoded
   app.use(express.static(PUBLIC_DIR));
 
   // Health check for proxies / uptime monitors (unauthenticated).
   app.get('/healthz', (_req, res) => res.json({ ok: true, ts: Date.now() }));
+
+  // ── Twilio inbound SMS: reply YES (or a time) to book from your phone ──
+  // Unauthenticated by design (Twilio can't log in); gated to the owner's number.
+  app.post('/twilio/inbound', async (req, res) => {
+    res.set('Content-Type', 'text/xml');
+    const xml = (msg: string) => res.send(msg ? `<Response><Message>${msg.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c] as string))}</Message></Response>` : '<Response></Response>');
+    const digits = (s: string) => (s || '').replace(/\D/g, '').slice(-10);
+    const from = String(req.body?.From ?? '');
+    const body = String(req.body?.Body ?? '').trim();
+    const owner = loadTwilioCreds().ownerMobile;
+    if (!owner || digits(from) !== digits(owner)) return xml(''); // ignore anyone but the owner
+    const lc = body.toLowerCase();
+    const queue = messages.meetingRequests();
+
+    if (/^(no|skip|n|not now)\b/.test(lc)) {
+      if (queue[0]) { messages.setMeetingReq(queue[0].id, 0); const left = messages.meetingRequests(); return xml(`Skipped ${queue[0].fromName || 'that one'}.${left[0] ? ` Next: ${left[0].fromName || left[0].fromEmail}. Reply YES to book.` : ' Queue clear. 🐕'}`); }
+      return xml('Nothing pending to skip.');
+    }
+    const target = queue[0];
+    if (!target) return xml('Nothing waiting in your Ready-to-book queue. 🐕');
+    let whenISO: string | undefined;
+    const isYes = /^(y|yes|yep|ok|okay|book|confirm|sure|do it|go)\b/.test(lc);
+    if (!isYes && brain.live) {
+      try {
+        const out = await brain.raw(
+          `Parse a meeting time from "${body}" as a single ISO 8601 datetime (next occurrence; business hours if vague). Return ONLY JSON {"whenISO":"..."} or {"whenISO":null}. NOW: ${new Date().toISOString()}`,
+          { type: 'object', additionalProperties: false, properties: { whenISO: { type: ['string', 'null'] } }, required: ['whenISO'] }, 150,
+        );
+        const w = JSON.parse(out.slice(out.indexOf('{'), out.lastIndexOf('}') + 1)).whenISO;
+        if (w) whenISO = w;
+      } catch { /* ignore */ }
+    }
+    try {
+      const r = await bookFromMessage(target, { whenISO }, brain, cfg);
+      const next = messages.meetingRequests()[0];
+      return xml(`✅ Booked ${r.contactName} for ${r.whenLabel}${r.join ? ' (Zoom + invite sent)' : r.sent ? ' (invite sent)' : ' (confirmation queued)'}.${next ? ` Next: ${next.fromName || next.fromEmail}. Reply YES.` : ' Queue clear. 🐕'}`);
+    } catch (err) {
+      return xml(`Couldn't book that: ${(err as Error).message}`);
+    }
+  });
 
   // Parse cookies for auth.
   app.use((req, _res, next) => {
@@ -442,75 +484,12 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   app.post('/api/messages/:id/book', async (req, res) => {
     const m = messages.get(req.params.id);
     if (!m || !m.fromEmail) return res.status(404).json({ error: 'message not found' });
-    const to = m.fromEmail;
-    const minutes = Number(req.body?.minutes ?? 30);
-
-    // Pick the time: explicit > one Claude tries to read from the thread > default.
-    let start: Date | null = req.body?.whenISO ? new Date(String(req.body.whenISO)) : null;
-    if ((!start || isNaN(start.getTime())) && brain.live) {
-      try {
-        const out = await brain.raw(
-          `From this email, extract the meeting time the sender proposed as a single ISO 8601 datetime (assume the next occurrence, business hours if vague). ` +
-            `Return ONLY JSON {"whenISO": "..."} or {"whenISO": null} if none.\n\nDATE NOW: ${new Date().toISOString()}\n\n${m.subject}\n${m.body.slice(0, 2000)}`,
-          { type: 'object', additionalProperties: false, properties: { whenISO: { type: ['string', 'null'] } }, required: ['whenISO'] },
-          200,
-        );
-        const w = JSON.parse(out.slice(out.indexOf('{'), out.lastIndexOf('}') + 1)).whenISO;
-        if (w) start = new Date(w);
-      } catch { /* fall through to default */ }
+    try {
+      const r = await bookFromMessage(m, { whenISO: req.body?.whenISO, minutes: req.body?.minutes }, brain, cfg);
+      res.json(r);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
     }
-    if (!start || isNaN(start.getTime())) {
-      start = new Date(Date.now() + 86_400_000); // tomorrow
-      start.setHours(15, 0, 0, 0); // ~mid-morning US
-    }
-    const end = new Date(start.getTime() + minutes * 60_000);
-    const title = `Call with ${m.fromName || to}`;
-
-    let videoLink = cfg.calcom?.bookingUrl || '';
-    let zoomMeetingId: string | null = null;
-    if (zoomConfigured()) {
-      try { const z = await createZoomMeeting({ topic: title, startISO: start.toISOString(), minutes }); videoLink = z.joinUrl; zoomMeetingId = z.meetingId; }
-      catch (err) { logActivity('error', `Zoom create failed during book: ${(err as Error).message}`); }
-    }
-    const deal = m.dealId ? deals.get(m.dealId) ?? null : (deals.findByContact(to) ?? null);
-    const evt: CalendarEvent = {
-      id: randomUUID().slice(0, 16), title, start: start.toISOString(), end: end.toISOString(),
-      location: videoLink || 'Video call', attendees: to, notes: `Booked from "${m.subject}".`, dealId: deal?.id ?? null, source: 'big-dog', zoomMeetingId,
-    };
-    events.upsert(evt);
-    messages.setMeetingReq(m.id, 0); // clear from the Ready-to-book queue
-
-    const when = start.toLocaleString('en-US', { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-    let subject = `Confirmed: ${title} — ${when}`;
-    let body = `Hi ${m.fromName || ''},\n\nGreat — I've set us up for ${when} (${minutes} min).${videoLink ? `\n\nJoin: ${videoLink}` : ''}\n\nIf another time is better, just say the word.\n\n${cfg.owner.signature}`;
-    if (brain.live) {
-      try {
-        const c = await brain.composeEmail({ to, subject, instruction: `Confirm the meeting for ${when} (${minutes} min). Friendly, brief.${videoLink ? ` Include the join link: ${videoLink}.` : ''} Offer to adjust the time if needed.`, memory: memories.recall(to) });
-        subject = c.subject; body = c.body;
-      } catch { /* keep template */ }
-    }
-
-    const account = accountById(evt.attendees ? (m.accountId || allAccounts()[0]?.id || '') : '');
-    if (deal) deals.upsert({ ...deal, nextStep: `Meeting booked for ${when}`, lastActivity: new Date().toISOString(), updatedAt: new Date().toISOString() });
-    messages.markRead(m.id);
-
-    if (account) {
-      try {
-        await sendMail(account, { to, subject, body, inReplyTo: m.messageId });
-        recordSentMessage({ accountId: account.id, fromName: account.label, fromEmail: account.email, toEmails: to, subject, body });
-        logActivity('book', `Booked + confirmed ${title} for ${when}`);
-        return res.json({ ok: true, sent: true, when: start.toISOString(), join: videoLink, eventId: evt.id });
-      } catch (err) {
-        // Fall back to a queued draft if the send fails.
-        logActivity('error', `Confirmation send failed: ${(err as Error).message}`);
-      }
-    }
-    const draft: Draft = {
-      id: randomUUID().slice(0, 16), accountId: m.accountId || allAccounts()[0]?.id || 'demo', inReplyTo: m.messageId, dealId: deal?.id ?? null,
-      toEmails: to, ccEmails: null, attachmentIds: null, subject, body, rationale: `Meeting confirmation for ${when} (queued).`, status: 'pending', createdAt: new Date().toISOString(), sentAt: null,
-    };
-    drafts.insert(draft);
-    res.json({ ok: true, sent: false, queued: true, when: start.toISOString(), join: videoLink, eventId: evt.id, draftId: draft.id });
   });
 
   // Dismiss from the Ready-to-book queue ("not a meeting / not now").
