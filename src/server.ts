@@ -36,6 +36,7 @@ import { handleOwnerSms } from './smscommands.js';
 import { voiceConfigured, loadVoiceSettings, saveVoiceSettings, publicVoice, testVoice, synthesize, saveVoiceSample, voiceFilePath } from './voice.js';
 import { verifierConfigured, saveVerifySettings, publicVerify, testVerifier } from './emailverify.js';
 import { browserConfigured, browserReady } from './browser.js';
+import { managedActive } from './managed.js';
 import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
 import type { AccountsConfig, DealStage, Draft, CalendarEvent } from './types.js';
@@ -176,6 +177,9 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaul
       twilio: { configured: twilioConfigured() },
       voice: { configured: voiceConfigured() },
       verify: { configured: verifierConfigured() },
+      // What Big Dog provides for the user with zero setup (managed service +
+      // bundled voice + native SMTP verification). Drives the one-step wizard.
+      managed: { brain: managedActive(), voice: voiceConfigured(), verify: true },
       setup: {
         claude: reqBrain().live,
         mailbox: allAccounts().length > 0,
@@ -1004,6 +1008,32 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaul
     if (!email.includes('@')) return res.status(400).json({ error: 'need a full email address' });
     try {
       res.json(await discoverMailConfig(email, password));
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // One-tap onboarding: discover servers, verify the login, and save the
+  // mailbox in a single call. Powers the one-step setup wizard.
+  app.post('/api/accounts/connect', async (req, res) => {
+    const email = String(req.body?.email ?? '').trim();
+    const password = String(req.body?.password ?? '');
+    if (!email.includes('@') || !password) return res.status(400).json({ error: 'Enter your email and password.' });
+    try {
+      const d = await discoverMailConfig(email, password);
+      const c = d.config;
+      if (!c) return res.json({ ok: false, detail: d.detail || "Couldn't find your email's servers automatically. Try Advanced setup." });
+      if (!c.verified) {
+        return res.json({ ok: false, needsManual: true, detail: d.detail || 'Found your mail servers, but the login was rejected. Double-check the password — Gmail and Outlook need an “App Password,” not your normal one.' });
+      }
+      const id = ((email.split('@')[1] || 'mail').split('.')[0] || 'mail').toLowerCase().replace(/[^a-z0-9-]/g, '-');
+      const a: Account = {
+        id, label: email, email,
+        imap: { host: c.imap.host, port: Number(c.imap.port || 993), secure: c.imap.secure !== false, user: email, pass: password },
+        smtp: { host: c.smtp.host, port: Number(c.smtp.port || 465), secure: !!c.smtp.secure, user: email, pass: password },
+      };
+      saveAccount(a);
+      res.json({ ok: true, email });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }

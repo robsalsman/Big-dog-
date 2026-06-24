@@ -190,3 +190,44 @@ input.subj { width: 100%; background: var(--bg); color: var(--text); border: 1px
   background: rgba(255,90,95,.10); border: 1px solid var(--hot); color: var(--text);
   font-size: 14px;
 }
+
+/* ── First-run wizard (one-step onboarding) ───────────────────────────── */
+.wizard {
+  margin-bottom: 18px; padding: 22px 24px; border-radius: var(--radius);
+  background: linear-gradient(160deg, rgba(240,165,0,.10), rgba(54,192,138,.06));
+  border: 1px solid var(--accent);
+}
+.wz-head { display: flex; gap: 14px; align-items: center; }
+.wz-logo { font-size: 40px; line-height: 1; }
+.wz-head h2 { margin: 0 0 2px; font-size: 22px; }
+.wz-head p { margin: 0; font-size: 14px; }
+.wz-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 4px; }
+.wz-chip {
+  font-size: 13px; padding: 5px 11px; border-radius: 999px;
+  background: rgba(54,192,138,.12); border: 1px solid var(--good); color: var(--good);
+  font-weight: 600;
+}
+.wz-chip .muted { color: var(--good); opacity: .75; font-weight: 500; }
+.wz-step { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+.wz-step h3 { margin: 0 0 4px; font-size: 17px; }
+.wz-step p { margin: 0 0 10px; }
+.wz-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+.wz-row input {
+  flex: 1; min-width: 220px; padding: 11px 13px; font-size: 15px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; color: var(--text);
+}
+.wz-row input:focus { outline: none; border-color: var(--accent); }
+.wz-row .btn.primary { padding: 11px 18px; font-size: 15px; }
+.wz-substep { margin-top: 12px; padding: 12px; border: 1px dashed var(--line); border-radius: 8px; }
+.wz-foot { margin-top: 14px; }
+.wz-foot a, .wz-step a { color: var(--accent); cursor: pointer; text-decoration: none; font-size: 13px; }
+.wz-foot a:hover, .wz-step a:hover { text-decoration: underline; }
+
+/* Advanced (collapsed) connections panel in Settings */
+.adv-setup { margin-bottom: 16px; }
+.adv-setup > summary {
+  cursor: pointer; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel-2); font-weight: 600; list-style: none;
+}
+.adv-setup > summary::-webkit-details-marker { display: none; }
+.adv-setup > summary:hover { border-color: var(--accent); }

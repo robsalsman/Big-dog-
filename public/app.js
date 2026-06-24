@@ -161,23 +161,99 @@ async function load() {
 }
 
 // Guided-setup banner — shows on the dashboard until the essentials are connected.
+// First-run wizard: when the mailbox isn't connected yet, show ONE friendly
+// step. Everything technical (brain, voice, verification) is handled for the
+// user, so we just reassure them and ask for the one thing only they can give:
+// their email. Hides itself the moment a mailbox is connected.
 function renderSetupBanner() {
   const el = $('#setup-banner'); if (!el) return;
   const s = state.setup || {};
-  const required = [
-    { k: 'claude', label: 'Connect Claude' },
-    { k: 'mailbox', label: 'Add your mailbox' },
-    { k: 'password', label: 'Set a password' },
-  ];
-  const missing = required.filter((r) => !s[r.k]);
-  if (!missing.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const mg = state.managed || {};
+  if (s.mailbox) { el.style.display = 'none'; el.innerHTML = ''; return; }
+
+  const name = (state.user && state.user.username) || (state.owner && state.owner.name) || 'there';
+  const brainHandled = mg.brain || s.claude; // managed master key, or a live brain
+
+  // "Already handled for you" chips.
+  const handled = [];
+  if (brainHandled) handled.push('Brain (Claude)');
+  if (mg.voice) handled.push('Voice');
+  if (mg.verify) handled.push('Email verification');
+  const chips = handled.map((h) => `<span class="wz-chip">✓ ${esc(h)} <span class="muted">— handled</span></span>`).join('');
+
+  // If the brain isn't handled (self-host, no key), add a tiny key step.
+  const keyStep = brainHandled ? '' : `
+    <div class="wz-substep">
+      <div class="muted small" style="margin-bottom:4px">Optional: paste your Claude API key so Big Dog can think (or skip and do it later in Settings).</div>
+      <div class="wz-row">
+        <input id="wz-key" type="password" placeholder="sk-ant-…" />
+        <button class="btn small" onclick="wizardSaveKey()">Save key</button>
+      </div>
+      <div id="wz-key-status" class="muted small"></div>
+    </div>`;
+
   el.style.display = '';
   el.innerHTML = `
-    <div class="setup-banner">
-      <span>⚠ Finish setup — ${missing.length} required item${missing.length > 1 ? 's' : ''} left: <strong>${missing.map((m) => esc(m.label)).join(' · ')}</strong></span>
-      <button class="btn small primary" onclick="switchTab('settings')">Finish setup →</button>
+    <div class="wizard">
+      <div class="wz-head">
+        <span class="wz-logo">🐕</span>
+        <div>
+          <h2>Welcome, ${esc(name)} — let's get you working.</h2>
+          <p class="muted">Big Dog already handles the technical stuff. You've got just <strong>one</strong> thing to do.</p>
+        </div>
+      </div>
+      ${chips ? `<div class="wz-chips">${chips}</div>` : ''}
+      <div class="wz-step">
+        <h3>1 · Connect your email</h3>
+        <p class="muted small">Big Dog becomes your inbox, calendar, and sales partner. Enter your work email — it finds the settings for you. <em>Gmail / Outlook: use an “App Password,” not your normal password.</em></p>
+        <div class="wz-row">
+          <input id="wz-email" type="email" autocomplete="email" placeholder="you@yourcompany.com" />
+          <input id="wz-pass" type="password" autocomplete="off" placeholder="password / app password" />
+        </div>
+        <div class="wz-row">
+          <button class="btn primary" onclick="wizardConnect()">Connect my email →</button>
+          <span id="wz-status" class="muted small"></span>
+        </div>
+        ${keyStep}
+      </div>
+      <div class="wz-foot">
+        <a onclick="switchTab('settings')">Prefer to do it manually? Advanced setup →</a>
+      </div>
     </div>`;
 }
+
+window.wizardConnect = async () => {
+  const email = $('#wz-email').value.trim();
+  const password = $('#wz-pass').value;
+  const out = $('#wz-status');
+  if (!email.includes('@') || !password) { out.textContent = 'Enter your email and password.'; return; }
+  out.textContent = '🔍 Connecting & verifying your login…';
+  try {
+    const r = await api('/api/accounts/connect', { method: 'POST', body: { email, password } });
+    if (r.ok) {
+      out.innerHTML = '✅ Connected! Pulling your inbox…';
+      toast('Email connected. 🐕');
+      await load();
+      switchTab('inbox');
+      // Kick off a first sync so the inbox fills immediately.
+      api('/api/sync', { method: 'POST' }).then(() => load()).catch(() => {});
+    } else {
+      out.innerHTML = esc(r.detail || 'Could not connect.') + ' &nbsp;<a onclick="switchTab(\'settings\')">Advanced setup →</a>';
+    }
+  } catch (e) { out.textContent = 'Error: ' + e.message; }
+};
+
+window.wizardSaveKey = async () => {
+  const key = $('#wz-key') && $('#wz-key').value.trim();
+  const out = $('#wz-key-status');
+  if (!key) { out.textContent = 'Paste your key first.'; return; }
+  out.textContent = 'Saving & testing…';
+  try {
+    const r = await api('/api/settings', { method: 'POST', body: { anthropicKey: key } });
+    out.textContent = r.verified ? '✅ Brain connected.' : (r.live ? '⚠ Saved but the test call failed — check the key.' : 'Saved.');
+    await load();
+  } catch (e) { out.textContent = 'Error: ' + e.message; }
+};
 
 function renderAll() {
   const unread = state.messages.filter((m) => m.unread).length;
@@ -1273,7 +1349,10 @@ async function renderSettings() {
   try { s = await api('/api/settings'); } catch (e) { el.innerHTML = 'Error: ' + esc(e.message); return; }
   const sel = (v) => (s.provider === v ? 'selected' : '');
   el.innerHTML = `
-    ${setupStatusCard()}
+    <details class="adv-setup" ${(state.setup && state.setup.mailbox) ? '' : 'open'}>
+      <summary>🔌 Connections &amp; integrations <span class="muted small">(advanced)</span></summary>
+      <div style="margin-top:10px">${setupStatusCard()}</div>
+    </details>
     <h2>Settings — your AI backend</h2>
     <div class="muted small" style="margin-bottom:14px">
       Pick who powers Big Dog and drop in your own key. Stored locally on this machine — keys never leave it except to call the model you choose.

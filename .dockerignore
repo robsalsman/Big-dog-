@@ -9,3 +9,7 @@ data
 *.log
 .DS_Store
 npm-debug.log*
+
+# Never bake real mailbox secrets into the image
+config/accounts.json
+data/

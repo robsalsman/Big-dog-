@@ -1,5 +1,6 @@
 import { settingsStore } from './db.js';
 import { selectProvider, type LLMProvider } from './llm/provider.js';
+import { managedBrainKey } from './managed.js';
 import type { AppConfig } from './config.js';
 
 /**
@@ -59,9 +60,14 @@ export function saveSettings(partial: Partial<Record<keyof Settings, unknown>>):
 }
 
 export function buildProvider(s: Settings): LLMProvider {
+  // Managed mode: if the user hasn't brought their own Claude key, run the brain
+  // on the central master key so it's live with zero setup. A user's own key
+  // always wins.
+  const managed = managedBrainKey();
+  const useManaged = !!managed && !s.anthropicKey;
   return selectProvider({
-    provider: s.provider,
-    anthropicKey: s.anthropicKey || undefined,
+    provider: useManaged ? 'anthropic' : s.provider,
+    anthropicKey: s.anthropicKey || (useManaged ? managed : undefined),
     anthropicModel: s.anthropicModel,
     openaiKey: s.openaiKey || undefined,
     openaiModel: s.openaiModel,
