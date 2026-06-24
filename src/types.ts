@@ -171,6 +171,7 @@ export interface Prospect {
   location: string;
   source: string; // 'web' | 'apollo'
   notes: string;
+  verifyStatus?: 'verified' | 'deliverable' | 'catch-all';
 }
 
 export type MessageCategory = 'reply' | 'fyi' | 'promotion' | 'invoice' | 'receipt' | 'notification' | 'spam';

@@ -265,8 +265,9 @@ async function verifyOne(p: Prospect, brain: BigDogBrain): Promise<Prospect | nu
   if (parts.length >= 2) {
     const r = await findContactEmail({ name: p.name, domain }, brain, { verify: !useApi }).catch(() => null);
     if (r && r.email && (r.confidence === 'verified' || r.confidence === 'guess')) {
-      const mark = r.confidence === 'verified' ? '✓ verified' : '✓ deliverable (pattern)';
-      return { ...p, email: r.email, notes: `${p.notes ? p.notes + ' · ' : ''}${mark} — ${r.method}` };
+      const status = r.confidence === 'verified' ? 'verified' : 'deliverable';
+      const mark = status === 'verified' ? '✓ verified' : '✓ deliverable (pattern)';
+      return { ...p, email: r.email, verifyStatus: status, notes: `${p.notes ? p.notes + ' · ' : ''}${mark} — ${r.method}` };
     }
   }
 
@@ -274,13 +275,13 @@ async function verifyOne(p: Prospect, brain: BigDogBrain): Promise<Prospect | nu
   if (p.email && p.email.includes('@')) {
     if (useApi) {
       const v = await verifyAddress(p.email).catch(() => null);
-      if (v?.status === 'valid') return { ...p, notes: `${p.notes ? p.notes + ' · ' : ''}✓ verified (${v.provider})` };
-      if (v?.status === 'catch-all') return { ...p, notes: `${p.notes ? p.notes + ' · ' : ''}✓ deliverable — catch-all (${v.provider})` };
+      if (v?.status === 'valid') return { ...p, verifyStatus: 'verified', notes: `${p.notes ? p.notes + ' · ' : ''}✓ verified (${v.provider})` };
+      if (v?.status === 'catch-all') return { ...p, verifyStatus: 'catch-all', notes: `${p.notes ? p.notes + ' · ' : ''}✓ deliverable — catch-all (${v.provider})` };
       if (v?.status === 'invalid') return null;
       // 'unknown' → fall through to the MX check below
     }
     const host = await mxHost(p.email.split('@')[1]!).catch(() => null);
-    if (host) return { ...p, notes: `${p.notes ? p.notes + ' · ' : ''}✓ company address — domain accepts mail` };
+    if (host) return { ...p, verifyStatus: 'deliverable', notes: `${p.notes ? p.notes + ' · ' : ''}✓ company address — domain accepts mail` };
   }
   return null; // couldn't confirm a deliverable address → drop
 }
@@ -303,7 +304,7 @@ export function saveProspectAsDeal(p: Prospect): Deal {
     company: p.company,
     stage: 'new',
     value: null,
-    notes: [p.title, p.location, p.linkedin, p.notes].filter(Boolean).join(' · '),
+    notes: [p.verifyStatus ? `[${p.verifyStatus}]` : '', p.title, p.location, p.linkedin, p.notes].filter(Boolean).join(' · '),
     nextStep: p.email ? 'Open the conversation' : 'Find contact details, then reach out',
     nextStepDue: null,
     createdAt: now,

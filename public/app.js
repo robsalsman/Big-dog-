@@ -25,6 +25,18 @@ function showLogin() {
   $('#login').style.display = 'flex';
   setTimeout(() => $('#login-pw')?.focus(), 50);
 }
+// Email-verification badge from a status string or a deal-notes token.
+function verifyBadge(status) {
+  if (!status) return '';
+  if (status === 'verified') return '<span class="tag good" title="Email confirmed deliverable">✓ verified</span>';
+  if (status === 'deliverable') return '<span class="tag warm" title="Correct format on a live mail domain">✓ deliverable</span>';
+  if (status === 'catch-all') return '<span class="tag warm" title="Domain accepts all addresses">~ catch-all</span>';
+  return '';
+}
+function dealVerifyBadge(notes) {
+  const m = (notes || '').match(/^\[(verified|deliverable|catch-all)\]/);
+  return m ? verifyBadge(m[1]) : '';
+}
 window.doLogin = async () => {
   try {
     await api('/api/auth/login', { method: 'POST', body: { password: $('#login-pw').value } });
@@ -641,7 +653,7 @@ function renderPipeline() {
         .map(
           (d) => `
         <div class="deal">
-          <h4>${esc(d.title)}</h4>
+          <h4>${esc(d.title)} ${dealVerifyBadge(d.notes)}</h4>
           <div class="muted small">${esc(d.company || d.contactName)} · ${money(d.value)}</div>
           <div class="next">→ ${esc(d.nextStep)}${d.nextStepDue ? ` (by ${d.nextStepDue})` : ''}</div>
           <select onchange="moveDeal('${d.id}', this.value)">
@@ -1140,7 +1152,7 @@ window.findLeads = async () => {
           <div>
             <strong>${esc(p.name)}</strong> ${p.title ? `<span class="muted small">${esc(p.title)}</span>` : ''}
             <div>${esc(p.company)} ${p.location ? `<span class="muted small">· ${esc(p.location)}</span>` : ''}</div>
-            <div class="small" id="lead-email-${i}">${p.email ? `✉ ${esc(p.email)}` : '<span class="muted">✉ no email yet</span>'}</div>
+            <div class="small" id="lead-email-${i}">${p.email ? `✉ ${esc(p.email)}` : '<span class="muted">✉ no email yet</span>'} ${verifyBadge(p.verifyStatus)}</div>
             ${p.linkedin ? `<div class="small"><a href="${esc(p.linkedin)}" target="_blank">LinkedIn</a></div>` : ''}
             ${p.notes ? `<div class="muted small">🐕 ${esc(p.notes)}</div>` : ''}
           </div>
