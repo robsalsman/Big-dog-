@@ -257,6 +257,12 @@ export const messages = {
     // and dismissed (archived) messages are hidden.
     return db.prepare("SELECT * FROM messages WHERE (folder IS NULL OR folder != 'SENT') AND (archived IS NULL OR archived = 0) ORDER BY date DESC LIMIT ?").all(limit) as Message[];
   },
+  meetingRequests(limit = 50): Message[] {
+    return db.prepare("SELECT * FROM messages WHERE meetingReq = 1 AND (archived IS NULL OR archived = 0) AND (folder IS NULL OR folder != 'SENT') ORDER BY date DESC LIMIT ?").all(limit) as Message[];
+  },
+  setMeetingReq(id: string, val: 0 | 1) {
+    db.prepare('UPDATE messages SET meetingReq = ? WHERE id = ?').run(val, id);
+  },
   forContact(email: string, limit = 100): Message[] {
     const e = (email || '').toLowerCase().trim();
     return db.prepare('SELECT * FROM messages WHERE lower(fromEmail) = ? OR lower(toEmails) LIKE ? ORDER BY date DESC LIMIT ?').all(e, `%${e}%`, limit) as Message[];

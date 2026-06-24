@@ -111,6 +111,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       browser: { configured: browserConfigured(), ready: browserReady() },
       prospect: activeProvider(cfg),
       messages: messages.recent(100),
+      readyToBook: messages.meetingRequests(),
       deals: deals.all(),
       events: events.all(),
       drafts: drafts.pending(),
@@ -475,6 +476,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       location: videoLink || 'Video call', attendees: to, notes: `Booked from "${m.subject}".`, dealId: deal?.id ?? null, source: 'big-dog', zoomMeetingId,
     };
     events.upsert(evt);
+    messages.setMeetingReq(m.id, 0); // clear from the Ready-to-book queue
 
     const when = start.toLocaleString('en-US', { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
     let subject = `Confirmed: ${title} — ${when}`;
@@ -507,6 +509,13 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     };
     drafts.insert(draft);
     res.json({ ok: true, sent: false, queued: true, when: start.toISOString(), join: videoLink, eventId: evt.id, draftId: draft.id });
+  });
+
+  // Dismiss from the Ready-to-book queue ("not a meeting / not now").
+  app.post('/api/messages/:id/not-meeting', (req, res) => {
+    if (!messages.get(req.params.id)) return res.status(404).json({ error: 'message not found' });
+    messages.setMeetingReq(req.params.id, 0);
+    res.json({ ok: true });
   });
 
   // Create a meeting invite: calendar event + a (queued) invite email.

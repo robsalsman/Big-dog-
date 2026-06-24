@@ -139,9 +139,29 @@ function messageCard(m) {
     </div>`;
 }
 
+function readyToBookCard() {
+  const items = (state.readyToBook || []);
+  if (!items.length) return '';
+  return `
+    <div class="card" style="border:1px solid var(--good, #36c98b);background:var(--bg);margin-bottom:14px">
+      <strong>📅 Ready to book (${items.length})</strong>
+      <div class="muted small" style="margin:2px 0 8px">Prospects who want to meet — one tap creates the Zoom + calendar invite and sends the confirmation.</div>
+      ${items.map((m) => `
+        <div class="row" style="padding:6px 0;border-top:1px solid var(--line)">
+          <div><strong>${esc(m.fromName || m.fromEmail)}</strong> <span class="muted small">&lt;${esc(m.fromEmail)}&gt;</span>
+            <div class="small">${esc(m.subject)}</div>
+            ${m.summary ? `<div class="muted small">🐕 ${esc(m.summary)}</div>` : ''}</div>
+          <div style="white-space:nowrap">
+            <button class="btn small good" onclick="bookMeeting('${m.id}')">📅 Confirm &amp; book</button>
+            <button class="btn small ghost" onclick="notMeeting('${m.id}')">Not now</button>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
 function renderInbox() {
   const el = $('#inbox');
   const list = `
+    ${readyToBookCard()}
     <div class="chat-input" style="margin-bottom:14px">
       <input id="inbox-search" placeholder="🔎 Search inbox &amp; pipeline…" value="${esc(inboxQuery)}" />
       ${inboxQuery ? '<button class="btn ghost" onclick="clearSearch()">Clear</button>' : ''}
@@ -205,9 +225,18 @@ window.bookMeeting = async (msgId) => {
   try {
     const r = await api('/api/messages/' + encodeURIComponent(msgId) + '/book', { method: 'POST' });
     await load();
+    renderInbox();
     const when = r.when ? fmtDate(r.when) : '';
     if (r.sent) toast(`Booked for ${when} — confirmation sent. 🐕`);
     else toast(`Booked for ${when} — confirmation queued in Drafts.`);
+  } catch (e) { toast('Error: ' + e.message); }
+};
+
+window.notMeeting = async (msgId) => {
+  try {
+    await api('/api/messages/' + encodeURIComponent(msgId) + '/not-meeting', { method: 'POST' });
+    await load();
+    renderInbox();
   } catch (e) { toast('Error: ' + e.message); }
 };
 
