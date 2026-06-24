@@ -139,6 +139,12 @@ db.exec(`
   if (!cols.some((c) => c.name === 'sendAt')) db.exec('ALTER TABLE drafts ADD COLUMN sendAt TEXT');
 }
 
+// Migration: add messages.archived (dismiss from inbox) to pre-existing DBs.
+{
+  const cols = db.prepare('PRAGMA table_info(messages)').all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'archived')) db.exec('ALTER TABLE messages ADD COLUMN archived INTEGER DEFAULT 0');
+}
+
 // ── Messages ────────────────────────────────────────────────────────────
 export const messages = {
   upsert(m: Message) {
@@ -157,8 +163,15 @@ export const messages = {
     return db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as Message | undefined;
   },
   recent(limit = 100): Message[] {
-    // The main feed is received mail; sent mail still appears inside threads.
-    return db.prepare("SELECT * FROM messages WHERE folder IS NULL OR folder != 'SENT' ORDER BY date DESC LIMIT ?").all(limit) as Message[];
+    // The main feed is received mail; sent mail still appears inside threads,
+    // and dismissed (archived) messages are hidden.
+    return db.prepare("SELECT * FROM messages WHERE (folder IS NULL OR folder != 'SENT') AND (archived IS NULL OR archived = 0) ORDER BY date DESC LIMIT ?").all(limit) as Message[];
+  },
+  archive(id: string) {
+    db.prepare('UPDATE messages SET archived = 1 WHERE id = ?').run(id);
+  },
+  unarchive(id: string) {
+    db.prepare('UPDATE messages SET archived = 0 WHERE id = ?').run(id);
   },
   recentSent(limit = 100): Message[] {
     return db.prepare("SELECT * FROM messages WHERE folder = 'SENT' ORDER BY date DESC LIMIT ?").all(limit) as Message[];

@@ -254,6 +254,16 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     res.json({ ok: true, dismissed: !!d });
   });
 
+  // Dismiss a message from the inbox entirely (archive it + clear its draft).
+  app.post('/api/messages/:id/archive', (req, res) => {
+    const m = messages.get(req.params.id);
+    if (!m) return res.status(404).json({ error: 'message not found' });
+    const d = drafts.forMessage(m.messageId);
+    if (d) drafts.setStatus(d.id, 'discarded');
+    messages.archive(m.id);
+    res.json({ ok: true });
+  });
+
   // ── Do-not-draft sender list ────────────────────────────────────────
   app.get('/api/suppressed', (_req, res) => res.json({ emails: suppressed.all() }));
   app.post('/api/suppressed', (req, res) => {

@@ -130,7 +130,7 @@ function messageCard(m) {
         <button class="btn small primary" onclick="draftReply('${m.id}')">🐕 Draft my reply</button>
         <button class="btn small" onclick="research('${m.id}','${esc(m.fromName)} ${esc(m.fromEmail)}')">🔎 Research</button>
         <button class="btn small ghost" onclick="remember('${esc(m.fromEmail)}')">📝 Remember</button>
-        ${drafted ? `<button class="btn small ghost" onclick="dismissDraft('${m.id}')" title="Remove the suggested draft">✕ Dismiss draft</button>` : ''}
+        <button class="btn small ghost" onclick="dismissMessage('${m.id}')" title="Remove this message from the inbox">🗑 Dismiss</button>
         <button class="btn small ghost" onclick="suppressSender('${esc(m.fromEmail)}')" title="Stop auto-drafting replies to this sender">🚫 Don't draft</button>
       </div>
     </div>`;
@@ -204,6 +204,18 @@ window.dismissDraft = async (msgId) => {
     if (inboxQuery.trim()) runSearch(); else renderInbox();
     toast('Draft dismissed. 🐕');
   } catch (e) { toast('Error: ' + e.message); }
+};
+
+window.dismissMessage = async (msgId) => {
+  // Optimistically remove the card, then archive on the server.
+  const card = document.getElementById('body-' + msgId)?.closest('.card');
+  if (card) card.style.display = 'none';
+  try {
+    await api('/api/messages/' + encodeURIComponent(msgId) + '/archive', { method: 'POST' });
+    await load();
+    if (inboxQuery.trim()) runSearch(); else renderInbox();
+    toast('Dismissed. 🐕');
+  } catch (e) { if (card) card.style.display = ''; toast('Error: ' + e.message); }
 };
 
 window.suppressSender = async (email) => {
