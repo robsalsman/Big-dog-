@@ -8,6 +8,7 @@ import { createServer } from './server.js';
 import { startScheduler } from './scheduler.js';
 import { startBots } from './bots/index.js';
 import { setNotifiers } from './notify.js';
+import { twilioConfigured, loadTwilioCreds, sendSms } from './twilio.js';
 import { ensureBrowser } from './browser.js';
 import { seedDemoData } from './seed.js';
 
@@ -32,7 +33,11 @@ async function main() {
 
   const app = createServer(cfg, accountsCfg, brain);
   const notifiers = await startBots({ cfg, accounts: accountsCfg, brain });
-  setNotifiers(notifiers); // let any flow (hot-lead alerts, cadences) ping the bots
+  // Text the owner on hot-lead alerts + the morning brief, if Twilio is set up.
+  if (twilioConfigured() && loadTwilioCreds().ownerMobile) {
+    notifiers.push({ notify: async (text: string) => { await sendSms(text.slice(0, 600)).catch(() => {}); } });
+  }
+  setNotifiers(notifiers); // let any flow (hot-lead alerts, cadences) ping the bots/SMS
   startScheduler(cfg, accountsCfg, brain, notifiers);
 
   app.listen(cfg.port, () => {

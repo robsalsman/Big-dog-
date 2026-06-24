@@ -375,8 +375,12 @@ window.openContact = async (email) => {
       <button class="btn small ghost" onclick="renderContacts()">← All contacts</button>
       <div class="card" style="margin-top:10px">
         <div class="row"><div><h2 style="margin:0">${esc(c.name || c.email)}</h2>
-          <div class="muted small">${esc(c.email)}</div></div>
-          <button class="btn small primary" onclick="openCompose('${esc(c.email)}')">✏️ Email</button></div>
+          <div class="muted small">${esc(c.email)}${c.phone ? ' · ' + esc(c.phone) : ''}</div></div>
+          <div style="white-space:nowrap">
+            <button class="btn small primary" onclick="openCompose('${esc(c.email)}')">✏️ Email</button>
+            ${(state.twilio && state.twilio.configured && c.phone) ? `<button class="btn small" onclick="textContact('${esc(c.phone)}','${esc(c.name || '')}')">💬 Text</button>
+            <button class="btn small" onclick="callContact('${esc(c.phone)}')">📞 Call</button>` : ''}
+          </div></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
           <input class="subj" id="ct-name" placeholder="Name" value="${esc(c.name || '')}" />
           <input class="subj" id="ct-company" placeholder="Company" value="${esc(c.company || '')}" />
@@ -394,6 +398,18 @@ window.openContact = async (email) => {
         <div style="margin-top:8px">${acts.length ? acts.slice(0, 60).map((a) => `<div class="row" style="padding:3px 0"><span class="small">${a.kind}: ${esc(a.text)}</span><span class="muted small">${a.t ? fmtDate(a.t) : ''}</span></div>`).join('') : '<div class="muted small">No recorded activity yet.</div>'}</div>
       </div>`;
   } catch (e) { wrap.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+};
+window.textContact = async (phone, name) => {
+  const msg = prompt(`Text to ${name || phone}:`, '');
+  if (!msg) return;
+  try { await api('/api/sms', { method: 'POST', body: { to: phone, body: msg } }); toast('Text sent. 🐕'); }
+  catch (e) { toast('Error: ' + e.message); }
+};
+window.callContact = async (phone) => {
+  const msg = prompt('What should Big Dog say when they pick up?', 'Hi, this is Big Dog calling on behalf of Skynet Defense. ');
+  if (!msg) return;
+  try { await api('/api/call', { method: 'POST', body: { to: phone, message: msg } }); toast('Calling… 📞'); }
+  catch (e) { toast('Error: ' + e.message); }
 };
 window.saveContact = async (email) => {
   $('#ct-status').textContent = 'Saving…';
@@ -1267,6 +1283,26 @@ async function renderSettings() {
     </div>
 
     <div class="card" style="margin-top:22px">
+      <strong>📱 Text &amp; calls (Twilio)</strong> <span id="twilio-state" class="tag">checking…</span>
+      <div class="muted small" style="margin:4px 0 8px">
+        Lets Big Dog text/call you (hot-lead alerts, the morning brief) and reach customers from their contact card.
+        From the Twilio Console: Account SID + Auth Token, and your Twilio phone number.
+      </div>
+      <input class="subj" id="tw-accountSid" placeholder="Account SID (AC…)" style="width:100%" />
+      <input class="subj" id="tw-authToken" type="password" placeholder="Auth Token" style="width:100%" />
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input class="subj" id="tw-fromNumber" placeholder="Twilio number (+1…)" style="flex:1" />
+        <input class="subj" id="tw-ownerMobile" placeholder="Your mobile (+1…)" style="flex:1" />
+      </div>
+      <div class="actions">
+        <button class="btn primary" onclick="saveTwilio()">💾 Save &amp; connect</button>
+        <button class="btn" onclick="testTwilioBtn()">Test</button>
+        <button class="btn" onclick="textMeTest()">📲 Text me a test</button>
+        <span id="twilio-status" class="muted small"></span>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:22px">
       <strong>🔒 Security</strong>
       <div class="muted small" id="auth-state" style="margin:4px 0 8px">Checking…</div>
       <input class="subj" id="pw-current" type="password" placeholder="Current password (only when changing)" />
@@ -1328,6 +1364,7 @@ async function renderSettings() {
   loadProfile();
   loadSuppressed();
   loadZoom();
+  loadTwilio();
 }
 
 async function loadProfile() {
@@ -1531,6 +1568,39 @@ window.testZoom2 = async () => {
   $('#zoom-status').textContent = 'Testing…';
   try { const t = await api('/api/zoom/test', { method: 'POST' }); $('#zoom-status').textContent = (t.ok ? '✅ ' : '❌ ') + t.detail; }
   catch (e) { $('#zoom-status').textContent = 'Error: ' + e.message; }
+};
+
+async function loadTwilio() {
+  try {
+    const t = await api('/api/twilio');
+    const tag = $('#twilio-state'); if (tag) { tag.textContent = t.configured ? 'connected' : 'not set'; tag.className = 'tag ' + (t.configured ? 'warm' : ''); }
+    if ($('#tw-accountSid')) $('#tw-accountSid').value = t.accountSid || '';
+    if ($('#tw-fromNumber')) $('#tw-fromNumber').value = t.fromNumber || '';
+    if ($('#tw-ownerMobile')) $('#tw-ownerMobile').value = t.ownerMobile || '';
+  } catch { /* not authed */ }
+}
+function twilioBody() {
+  return { accountSid: $('#tw-accountSid').value.trim(), authToken: $('#tw-authToken').value, fromNumber: $('#tw-fromNumber').value.trim(), ownerMobile: $('#tw-ownerMobile').value.trim() };
+}
+window.saveTwilio = async () => {
+  $('#twilio-status').textContent = 'Saving…';
+  try {
+    await api('/api/twilio', { method: 'POST', body: twilioBody() });
+    const t = await api('/api/twilio/test', { method: 'POST' });
+    await loadTwilio();
+    $('#twilio-status').textContent = (t.ok ? '✅ ' : '⚠ ') + t.detail;
+    toast(t.ok ? 'Twilio connected. 🐕' : 'Saved — ' + t.detail);
+  } catch (e) { $('#twilio-status').textContent = 'Error: ' + e.message; }
+};
+window.testTwilioBtn = async () => {
+  $('#twilio-status').textContent = 'Testing…';
+  try { const t = await api('/api/twilio/test', { method: 'POST' }); $('#twilio-status').textContent = (t.ok ? '✅ ' : '❌ ') + t.detail; }
+  catch (e) { $('#twilio-status').textContent = 'Error: ' + e.message; }
+};
+window.textMeTest = async () => {
+  $('#twilio-status').textContent = 'Sending…';
+  try { await api('/api/sms', { method: 'POST', body: { body: "What's up, Big Dog!? Your text alerts are live. 🐕" } }); $('#twilio-status').textContent = '✅ Sent — check your phone.'; }
+  catch (e) { $('#twilio-status').textContent = 'Error: ' + e.message; }
 };
 
 // ── Tabs ─────────────────────────────────────────────────────────────────

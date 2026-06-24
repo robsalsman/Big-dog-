@@ -28,6 +28,7 @@ import { generateDigest } from './digest.js';
 import { exportIcs } from './calendar.js';
 import { calcomConfigured, syncCalcomBookings } from './calcom.js';
 import { zoomConfigured, createZoomMeeting, saveZoomCreds, publicZoom, testZoom, getMeetingTranscript } from './zoom.js';
+import { twilioConfigured, saveTwilioCreds, publicTwilio, testTwilio, sendSms, makeCall } from './twilio.js';
 import { browserConfigured, browserReady } from './browser.js';
 import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
@@ -108,6 +109,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       stages: DEAL_STAGES,
       calcom: { configured: calcomConfigured(cfg), bookingUrl: cfg.calcom?.bookingUrl ?? '' },
       zoom: { configured: zoomConfigured() },
+      twilio: { configured: twilioConfigured() },
       browser: { configured: browserConfigured(), ready: browserReady() },
       prospect: activeProvider(cfg),
       messages: messages.recent(100),
@@ -564,6 +566,23 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     drafts.insert(draft);
     logActivity('calendar', `Drafted meeting invite to ${to}: "${title}" (${when})`);
     res.json({ ok: true, eventId: evt.id, draftId: draft.id });
+  });
+
+  // ── Twilio (SMS + voice) ────────────────────────────────────────────
+  app.get('/api/twilio', (_req, res) => res.json(publicTwilio()));
+  app.post('/api/twilio', (req, res) => { saveTwilioCreds(req.body ?? {}); res.json(publicTwilio()); });
+  app.post('/api/twilio/test', async (_req, res) => res.json(await testTwilio()));
+  app.post('/api/sms', async (req, res) => {
+    const body = String(req.body?.body ?? '').trim();
+    if (!body) return res.status(400).json({ error: 'empty message' });
+    try { const r = await sendSms(body, req.body?.to ? String(req.body.to) : undefined); logActivity('sms', `Texted ${req.body?.to || 'you'}: ${body.slice(0, 60)}`); res.json({ ok: true, sid: r.sid }); }
+    catch (err) { res.status(500).json({ error: (err as Error).message }); }
+  });
+  app.post('/api/call', async (req, res) => {
+    const message = String(req.body?.message ?? '').trim();
+    if (!message) return res.status(400).json({ error: 'empty message' });
+    try { const r = await makeCall(message, req.body?.to ? String(req.body.to) : undefined); logActivity('call', `Called ${req.body?.to || 'you'}`); res.json({ ok: true, sid: r.sid }); }
+    catch (err) { res.status(500).json({ error: (err as Error).message }); }
   });
 
   // ── Zoom (video meetings) ───────────────────────────────────────────
