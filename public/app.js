@@ -1349,6 +1349,7 @@ async function renderSettings() {
   try { s = await api('/api/settings'); } catch (e) { el.innerHTML = 'Error: ' + esc(e.message); return; }
   const sel = (v) => (s.provider === v ? 'selected' : '');
   el.innerHTML = `
+    <div id="admin-keys"></div>
     <details class="adv-setup" ${(state.setup && state.setup.mailbox) ? '' : 'open'}>
       <summary>🔌 Connections &amp; integrations <span class="muted small">(advanced)</span></summary>
       <div style="margin-top:10px">${setupStatusCard()}</div>
@@ -1579,6 +1580,7 @@ async function renderSettings() {
     $('#auth-state') && ($('#auth-state').textContent = `Signed in as ${who}${role}. Your inbox, contacts, and deals are private to your account.`);
   }).catch(() => {});
   loadMailboxes();
+  if (state.user && state.user.role === 'admin') renderAdminKeys();
   loadProfile();
   loadSuppressed();
   loadZoom();
@@ -1981,6 +1983,52 @@ window.saveBudget = async () => {
     renderBilling();
     toast('Budget updated. 🐕');
   } catch (e) { $('#bg-status').textContent = 'Error: ' + e.message; }
+};
+
+async function renderAdminKeys() {
+  const el = $('#admin-keys'); if (!el) return;
+  let d;
+  try { d = await api('/api/admin/keys'); } catch { return; }
+  const row = (k) => `
+    <div class="row" style="padding:5px 0;gap:8px">
+      <label class="small" style="flex:1">${esc(k.label)}
+        <input class="subj" id="vk-${k.name.replace(/\./g,'_')}" type="${k.secret ? 'password' : 'text'}"
+          placeholder="${k.set ? '•••• already set — paste to replace' : 'paste value'}" autocomplete="off" />
+      </label>
+      <span class="muted small" style="white-space:nowrap">${k.set ? '✅ set' : '—'}</span>
+    </div>`;
+  el.innerHTML = `
+    <div class="card" style="border-left:3px solid var(--accent)">
+      <strong>🔐 Managed service keys <span class="tag">admin</span></strong>
+      <div class="muted small" style="margin:4px 0 10px">
+        Paste your master keys from your other server. They're <strong>encrypted at rest</strong> and become the shared credentials for everyone — so your users bring nothing but their email.
+        ${d.masterSecretSet ? '' : '<br><span style="color:var(--accent)">Tip: set <code>BIGDOG_MASTER_SECRET</code> in your .env for the strongest encryption.</span>'}
+      </div>
+      ${d.keys.map(row).join('')}
+      <div class="actions" style="margin-top:10px">
+        <button class="btn primary" onclick="saveAdminKeys()">Save keys</button>
+        <span id="vk-status" class="muted small"></span>
+      </div>
+    </div>`;
+}
+
+window.saveAdminKeys = async () => {
+  const d = await api('/api/admin/keys').catch(() => null); if (!d) return;
+  const body = {};
+  for (const k of d.keys) {
+    const v = $('#vk-' + k.name.replace(/\./g, '_')); if (!v) continue;
+    const val = v.value.trim();
+    if (val) body[k.name] = val;
+  }
+  if (!Object.keys(body).length) { $('#vk-status').textContent = 'Nothing to save.'; return; }
+  $('#vk-status').textContent = 'Saving securely…';
+  try {
+    await api('/api/admin/keys', { method: 'POST', body });
+    $('#vk-status').textContent = '✅ Saved & encrypted.';
+    await load();
+    renderAdminKeys();
+    toast('Service keys saved. 🔐');
+  } catch (e) { $('#vk-status').textContent = 'Error: ' + e.message; }
 };
 
 async function renderAdminEconomy() {

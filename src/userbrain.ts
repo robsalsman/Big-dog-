@@ -28,3 +28,9 @@ export function brainForUser(userId: string, cfg: AppConfig): BigDogBrain {
 export function invalidateBrain(userId: string): void {
   brains.delete(userId);
 }
+
+/** Drop every cached brain — used when the managed master key changes so all
+ * users pick it up on their next request without a restart. */
+export function invalidateAllBrains(): void {
+  brains.clear();
+}

@@ -37,6 +37,8 @@ import { voiceConfigured, loadVoiceSettings, saveVoiceSettings, publicVoice, tes
 import { verifierConfigured, saveVerifySettings, publicVerify, testVerifier } from './emailverify.js';
 import { browserConfigured, browserReady } from './browser.js';
 import { managedActive } from './managed.js';
+import { vault, publicVault } from './secrets.js';
+import { invalidateAllBrains } from './userbrain.js';
 import { summary as economySummary, setBudget, remainingThisMonth } from './economy/ledger.js';
 import { rateCard, saveRateCard, defaultBudgetCents } from './economy/rates.js';
 import { economy as economyStore, users as allUsers } from './db.js';
@@ -1016,6 +1018,25 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaul
     if (!requireAdmin(req, res)) return;
     saveRateCard(req.body ?? {});
     res.json({ ok: true, rates: rateCard() });
+  });
+
+  // ── Admin Service-Keys vault (managed master credentials) ───────────
+  app.get('/api/admin/keys', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    res.json({ keys: publicVault(), masterSecretSet: !!process.env.BIGDOG_MASTER_SECRET });
+  });
+  app.post('/api/admin/keys', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    let touchedBrain = false;
+    for (const [name, value] of Object.entries(body)) {
+      const v = String(value ?? '').trim();
+      if (!v) continue;
+      if (v === '__clear__') { vault.clear(name); } else { vault.set(name, v); }
+      if (name === 'anthropicKey') touchedBrain = true;
+    }
+    if (touchedBrain) invalidateAllBrains(); // every user picks up the new brain key
+    res.json({ ok: true, keys: publicVault() });
   });
 
   // ── Mailbox management (in-app, no JSON editing) ────────────────────

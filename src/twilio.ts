@@ -1,4 +1,5 @@
 import { settingsStore } from './db.js';
+import { vault } from './secrets.js';
 
 /**
  * Twilio integration — lets Big Dog send SMS and place voice calls: text/call
@@ -20,10 +21,11 @@ const FIELDS: (keyof TwilioCreds)[] = ['accountSid', 'authToken', 'fromNumber', 
 
 export function loadTwilioCreds(): TwilioCreds {
   return {
-    accountSid: settingsStore.get('twilio.accountSid') || process.env.TWILIO_ACCOUNT_SID || '',
-    authToken: settingsStore.get('twilio.authToken') || process.env.TWILIO_AUTH_TOKEN || '',
-    fromNumber: settingsStore.get('twilio.fromNumber') || process.env.TWILIO_FROM_NUMBER || '',
-    ownerMobile: settingsStore.get('twilio.ownerMobile') || process.env.TWILIO_OWNER_MOBILE || '',
+    // Per-user setting → env → managed vault (operator's shared master creds).
+    accountSid: settingsStore.get('twilio.accountSid') || process.env.TWILIO_ACCOUNT_SID || vault.get('twilio.accountSid'),
+    authToken: settingsStore.get('twilio.authToken') || process.env.TWILIO_AUTH_TOKEN || vault.get('twilio.authToken'),
+    fromNumber: settingsStore.get('twilio.fromNumber') || process.env.TWILIO_FROM_NUMBER || vault.get('twilio.fromNumber'),
+    ownerMobile: settingsStore.get('twilio.ownerMobile') || process.env.TWILIO_OWNER_MOBILE || vault.get('twilio.ownerMobile'),
   };
 }
 

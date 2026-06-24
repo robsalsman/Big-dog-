@@ -12,8 +12,11 @@
  * step: "connect your email."
  */
 
+import { vault } from './secrets.js';
+
 export function managedBrainKey(): string {
-  return (process.env.BIGDOG_MANAGED_ANTHROPIC_KEY || '').trim();
+  // Admin-pasted vault key wins; env var is the fallback (for headless setups).
+  return (vault.get('anthropicKey') || process.env.BIGDOG_MANAGED_ANTHROPIC_KEY || '').trim();
 }
 
 /** Is Big Dog running as a managed service (central brain provided)? */

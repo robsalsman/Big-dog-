@@ -1,4 +1,5 @@
 import { settingsStore } from './db.js';
+import { vault } from './secrets.js';
 
 /**
  * Zoom integration — when Big Dog schedules a meeting it creates a real Zoom
@@ -20,9 +21,9 @@ const FIELDS: (keyof ZoomCreds)[] = ['accountId', 'clientId', 'clientSecret'];
 
 export function loadZoomCreds(): ZoomCreds {
   return {
-    accountId: settingsStore.get('zoom.accountId') || process.env.ZOOM_ACCOUNT_ID || '',
-    clientId: settingsStore.get('zoom.clientId') || process.env.ZOOM_CLIENT_ID || '',
-    clientSecret: settingsStore.get('zoom.clientSecret') || process.env.ZOOM_CLIENT_SECRET || '',
+    accountId: settingsStore.get('zoom.accountId') || process.env.ZOOM_ACCOUNT_ID || vault.get('zoom.accountId'),
+    clientId: settingsStore.get('zoom.clientId') || process.env.ZOOM_CLIENT_ID || vault.get('zoom.clientId'),
+    clientSecret: settingsStore.get('zoom.clientSecret') || process.env.ZOOM_CLIENT_SECRET || vault.get('zoom.clientSecret'),
   };
 }
 
