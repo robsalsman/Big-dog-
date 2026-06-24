@@ -51,6 +51,8 @@ export const VAULT_KEYS = [
   { name: 'zoom.accountId', label: 'Zoom Account ID', secret: false },
   { name: 'zoom.clientId', label: 'Zoom Client ID', secret: false },
   { name: 'zoom.clientSecret', label: 'Zoom Client Secret', secret: true },
+  { name: 'stripe.secretKey', label: 'Stripe Secret Key (billing)', secret: true },
+  { name: 'stripe.webhookSecret', label: 'Stripe Webhook Signing Secret', secret: true },
 ] as const;
 
 export const vault = {

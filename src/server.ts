@@ -39,6 +39,8 @@ import { browserConfigured, browserReady } from './browser.js';
 import { managedActive } from './managed.js';
 import { vault, publicVault } from './secrets.js';
 import { invalidateAllBrains } from './userbrain.js';
+import { stripeConfigured, packs, savePacks, createCheckout, verifySignature, handleEvent, type Pack } from './economy/stripe.js';
+import { grant } from './economy/ledger.js';
 import { summary as economySummary, setBudget, remainingThisMonth } from './economy/ledger.js';
 import { rateCard, saveRateCard, defaultBudgetCents } from './economy/rates.js';
 import { economy as economyStore, users as allUsers } from './db.js';
@@ -53,6 +55,19 @@ const PUBLIC_DIR = resolve(here, '..', 'public');
 export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaultBrain: BigDogBrain) {
   const app = express();
   app.set('trust proxy', 1); // behind a TLS reverse proxy (Caddy/nginx) in production
+
+  // Stripe webhook needs the RAW body for signature verification, so it must be
+  // registered before the JSON body parser. Unauthenticated (Stripe calls it).
+  app.post('/stripe/webhook', express.raw({ type: '*/*' }), (req, res) => {
+    if (!verifySignature(req.body as Buffer, req.headers['stripe-signature'] as string | undefined)) {
+      return res.status(400).send('bad signature');
+    }
+    try {
+      handleEvent(JSON.parse((req.body as Buffer).toString('utf8')));
+    } catch { /* malformed payload — ignore */ }
+    res.json({ received: true });
+  });
+
   app.use(express.json({ limit: '25mb' }));
   app.use(express.urlencoded({ extended: false })); // Twilio webhooks post form-encoded
   app.use(express.static(PUBLIC_DIR));
@@ -186,6 +201,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaul
       // bundled voice + native SMTP verification). Drives the one-step wizard.
       managed: { brain: managedActive(), voice: voiceConfigured(), verify: true },
       economy: economySummary(currentUserId()),
+      billing: { stripe: stripeConfigured() },
       setup: {
         claude: reqBrain().live,
         mailbox: allAccounts().length > 0,
@@ -1001,6 +1017,23 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaul
     res.json(economySummary(currentUserId()));
   });
 
+  // Prepaid credit packs + Stripe checkout.
+  app.get('/api/economy/packs', (_req, res) => {
+    res.json({ configured: stripeConfigured(), packs: packs() });
+  });
+  app.post('/api/economy/checkout', async (req, res) => {
+    const pack = packs().find((p) => p.id === String(req.body?.packId ?? ''));
+    if (!pack) return res.status(400).json({ error: 'Unknown pack.' });
+    try {
+      const proto = (req.headers['x-forwarded-proto'] as string) || (req.secure ? 'https' : 'http');
+      const origin = `${proto}://${req.headers.host}`;
+      const url = await createCheckout(currentUserId(), pack, origin);
+      res.json({ url });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // ── Admin economy: rate card + per-user usage rollup (admin only) ────
   const requireAdmin = (req: express.Request, res: express.Response): boolean => {
     if (allUsers.byId(currentUserId())?.role === 'admin') return true;
@@ -1012,12 +1045,27 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaul
       const u = allUsers.byId(a.userId);
       return { userId: a.userId, username: u?.username ?? a.userId, role: u?.role ?? 'user', ...economySummary(a.userId) };
     });
-    res.json({ rates: rateCard(), defaultBudgetCents: defaultBudgetCents(), users: rollup });
+    res.json({ rates: rateCard(), defaultBudgetCents: defaultBudgetCents(), packs: packs(), stripeConfigured: stripeConfigured(), users: rollup });
   });
   app.post('/api/admin/economy/rates', (req, res) => {
     if (!requireAdmin(req, res)) return;
     saveRateCard(req.body ?? {});
     res.json({ ok: true, rates: rateCard() });
+  });
+  app.post('/api/admin/economy/packs', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const p = (req.body?.packs ?? []) as Pack[];
+    if (!Array.isArray(p) || !p.length) return res.status(400).json({ error: 'need a non-empty packs array' });
+    savePacks(p);
+    res.json({ ok: true, packs: packs() });
+  });
+  app.post('/api/admin/economy/grant', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const userId = String(req.body?.userId ?? '');
+    const credits = Number(req.body?.credits ?? 0);
+    if (!userId || !Number.isFinite(credits) || credits === 0) return res.status(400).json({ error: 'need userId + non-zero credits' });
+    grant(userId, credits, 'admin grant');
+    res.json({ ok: true });
   });
 
   // ── Admin Service-Keys vault (managed master credentials) ───────────

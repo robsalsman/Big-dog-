@@ -240,3 +240,13 @@ input.subj { width: 100%; background: var(--bg); color: var(--text); border: 1px
 .rate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
 .rate-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 .rate-grid label input { margin-top: 2px; }
+
+/* Credit packs */
+.pack-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.pack {
+  cursor: pointer; text-align: center; padding: 16px 12px; border-radius: 10px;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--text); transition: border-color .15s, transform .1s;
+}
+.pack:hover { border-color: var(--accent); transform: translateY(-2px); }
+.pack-label { font-weight: 700; margin-bottom: 4px; }
+.pack-price { font-size: 24px; font-weight: 800; color: var(--accent); }

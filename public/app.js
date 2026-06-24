@@ -1936,11 +1936,14 @@ async function renderBilling() {
 
     <div class="card">
       <div class="row">
-        <div><div class="muted small">Spent this month</div><div style="font-size:26px;font-weight:800">${spent}</div></div>
+        <div><div class="muted small">Credit balance</div><div style="font-size:26px;font-weight:800">${usd(e.balanceCredits)} <span class="muted small" style="font-weight:500">${e.balanceCredits.toLocaleString()} credits</span></div></div>
+        <div style="text-align:center"><div class="muted small">Spent this month</div><div style="font-size:20px;font-weight:700">${spent}</div></div>
         <div style="text-align:right"><div class="muted small">Monthly budget</div><div style="font-size:20px;font-weight:700">${esc(cap)}</div></div>
       </div>
       ${bar}
     </div>
+
+    <div id="buy-credits"></div>
 
     <div class="card">
       <strong>Your monthly budget</strong>
@@ -1969,8 +1972,43 @@ async function renderBilling() {
 
     <div id="admin-economy"></div>`;
 
+  renderBuyCredits();
   if (state.user && state.user.role === 'admin') renderAdminEconomy();
 }
+
+async function renderBuyCredits() {
+  const el = $('#buy-credits'); if (!el) return;
+  let d;
+  try { d = await api('/api/economy/packs'); } catch { return; }
+  if (!d.configured) {
+    el.innerHTML = (state.user && state.user.role === 'admin')
+      ? `<div class="card"><strong>Buy credits</strong><div class="muted small" style="margin-top:4px">Billing isn't connected yet. Add your <strong>Stripe Secret Key</strong> in ⚙ Settings → Managed service keys to let users buy credits.</div></div>`
+      : '';
+    return;
+  }
+  el.innerHTML = `
+    <div class="card">
+      <strong>Buy credits</strong>
+      <div class="muted small" style="margin:4px 0 10px">Top up your balance. Credits never expire; you only spend what Big Dog actually uses.</div>
+      <div class="pack-grid">
+        ${d.packs.map((p) => `
+          <button class="pack" onclick="buyCredits('${esc(p.id)}')">
+            <div class="pack-label">${esc(p.label)}</div>
+            <div class="pack-price">$${p.usd}</div>
+            <div class="muted small">${p.credits.toLocaleString()} credits</div>
+          </button>`).join('')}
+      </div>
+      <div id="buy-status" class="muted small" style="margin-top:8px"></div>
+    </div>`;
+}
+
+window.buyCredits = async (packId) => {
+  const out = $('#buy-status'); if (out) out.textContent = 'Opening secure checkout…';
+  try {
+    const r = await api('/api/economy/checkout', { method: 'POST', body: { packId } });
+    if (r.url) window.location.href = r.url;
+  } catch (e) { if (out) out.textContent = 'Error: ' + e.message; }
+};
 
 window.saveBudget = async () => {
   const unlimited = $('#bg-unlimited').checked;
@@ -2118,7 +2156,11 @@ async function boot() {
   $('#logout-btn').style.display = st.authed ? '' : 'none';
   if (!st.authed) { showLogin({ hasAccounts: st.hasAccounts }); return; }
   $('#login').style.display = 'none';
-  load().catch((e) => toast('Failed to load: ' + e.message));
+  await load().catch((e) => toast('Failed to load: ' + e.message));
+  // Returning from Stripe checkout?
+  const q = new URLSearchParams(location.search);
+  if (q.get('billing') === 'success') { toast('Payment received — credits added. 🐕'); history.replaceState({}, '', location.pathname); switchTab('billing'); }
+  else if (q.get('billing') === 'cancel') { history.replaceState({}, '', location.pathname); }
 }
 boot();
 
