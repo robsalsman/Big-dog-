@@ -231,3 +231,12 @@ input.subj { width: 100%; background: var(--bg); color: var(--text); border: 1px
 }
 .adv-setup > summary::-webkit-details-marker { display: none; }
 .adv-setup > summary:hover { border-color: var(--accent); }
+
+/* ── Billing / usage ──────────────────────────────────────────────────── */
+.budget-bar { height: 10px; background: var(--panel-2); border-radius: 999px; overflow: hidden; margin: 12px 0 4px; }
+.budget-fill { height: 100%; background: var(--good); border-radius: 999px; transition: width .3s; }
+.budget-fill.warm { background: var(--accent); }
+.budget-fill.hot { background: var(--hot); }
+.rate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.rate-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.rate-grid label input { margin-top: 2px; }

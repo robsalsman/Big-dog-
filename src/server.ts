@@ -37,6 +37,9 @@ import { voiceConfigured, loadVoiceSettings, saveVoiceSettings, publicVoice, tes
 import { verifierConfigured, saveVerifySettings, publicVerify, testVerifier } from './emailverify.js';
 import { browserConfigured, browserReady } from './browser.js';
 import { managedActive } from './managed.js';
+import { summary as economySummary, setBudget, remainingThisMonth } from './economy/ledger.js';
+import { rateCard, saveRateCard, defaultBudgetCents } from './economy/rates.js';
+import { economy as economyStore, users as allUsers } from './db.js';
 import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
 import type { AccountsConfig, DealStage, Draft, CalendarEvent } from './types.js';
@@ -180,6 +183,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaul
       // What Big Dog provides for the user with zero setup (managed service +
       // bundled voice + native SMTP verification). Drives the one-step wizard.
       managed: { brain: managedActive(), voice: voiceConfigured(), verify: true },
+      economy: economySummary(currentUserId()),
       setup: {
         claude: reqBrain().live,
         mailbox: allAccounts().length > 0,
@@ -974,6 +978,44 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaul
     if (!req.body?.anthropicKey) merged.anthropicKey = loadSettings(cfg).anthropicKey;
     if (!req.body?.openaiKey) merged.openaiKey = loadSettings(cfg).openaiKey;
     res.json(await testProvider(buildProvider(merged)));
+  });
+
+  // ── Economy: credits, budget, usage ────────────────────────────────
+  app.get('/api/economy', (_req, res) => {
+    res.json({ ...economySummary(currentUserId()), recent: economyStore.recentUsage(currentUserId(), 30) });
+  });
+
+  // User sets their monthly cap (USD) or chooses unlimited.
+  app.post('/api/economy/budget', (req, res) => {
+    const b = req.body ?? {};
+    const unlimited = b.unlimited === true || b.unlimited === 'true';
+    let monthlyBudgetCents: number | null | undefined;
+    if (b.monthlyUsd !== undefined && b.monthlyUsd !== null && b.monthlyUsd !== '') {
+      const usd = Number(b.monthlyUsd);
+      if (!Number.isFinite(usd) || usd < 0) return res.status(400).json({ error: 'Enter a valid dollar amount.' });
+      monthlyBudgetCents = Math.round(usd * 100);
+    }
+    setBudget(currentUserId(), { unlimited, ...(monthlyBudgetCents !== undefined ? { monthlyBudgetCents } : {}) });
+    res.json(economySummary(currentUserId()));
+  });
+
+  // ── Admin economy: rate card + per-user usage rollup (admin only) ────
+  const requireAdmin = (req: express.Request, res: express.Response): boolean => {
+    if (allUsers.byId(currentUserId())?.role === 'admin') return true;
+    res.status(403).json({ error: 'admin only' }); return false;
+  };
+  app.get('/api/admin/economy', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const rollup = economyStore.allAccounts().map((a) => {
+      const u = allUsers.byId(a.userId);
+      return { userId: a.userId, username: u?.username ?? a.userId, role: u?.role ?? 'user', ...economySummary(a.userId) };
+    });
+    res.json({ rates: rateCard(), defaultBudgetCents: defaultBudgetCents(), users: rollup });
+  });
+  app.post('/api/admin/economy/rates', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    saveRateCard(req.body ?? {});
+    res.json({ ok: true, rates: rateCard() });
   });
 
   // ── Mailbox management (in-app, no JSON editing) ────────────────────

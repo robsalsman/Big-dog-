@@ -285,6 +285,50 @@ export const systemStore = {
   set(key: string, value: string) { sysDb.prepare('INSERT INTO system (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value); },
 };
 
+// ── Economy: credits, budgets, and per-user usage metering (shared) ───────
+// Lives in the system DB so the admin can roll up across users and Stripe
+// webhooks (which run outside any user context) can credit accounts.
+sysDb.exec(`CREATE TABLE IF NOT EXISTS economy_accounts (
+  userId TEXT PRIMARY KEY,
+  balanceCredits INTEGER NOT NULL DEFAULT 0,
+  monthlyBudgetCents INTEGER,        -- NULL = no cap set yet
+  unlimited INTEGER NOT NULL DEFAULT 0,
+  periodStart TEXT,                  -- ISO; start of the current billing month
+  createdAt TEXT
+);`);
+sysDb.exec(`CREATE TABLE IF NOT EXISTS usage_events (
+  id TEXT PRIMARY KEY,
+  userId TEXT NOT NULL,
+  ts TEXT NOT NULL,
+  kind TEXT NOT NULL,                -- llm | web_search | sms | call | verify | tts | grant | topup
+  qty REAL NOT NULL DEFAULT 0,       -- tokens / segments / minutes / count
+  usdCost REAL NOT NULL DEFAULT 0,   -- real provider cost in USD
+  credits INTEGER NOT NULL DEFAULT 0,-- charged to the user (negative for grants/topups)
+  meta TEXT
+);`);
+sysDb.exec(`CREATE INDEX IF NOT EXISTS idx_usage_user_ts ON usage_events (userId, ts);`);
+
+export interface EconomyAccount { userId: string; balanceCredits: number; monthlyBudgetCents: number | null; unlimited: number; periodStart: string | null; createdAt: string | null; }
+export interface UsageEvent { id: string; userId: string; ts: string; kind: string; qty: number; usdCost: number; credits: number; meta: string | null; }
+export const economy = {
+  getAccount(userId: string): EconomyAccount | undefined { return sysDb.prepare('SELECT * FROM economy_accounts WHERE userId = ?').get(userId) as EconomyAccount | undefined; },
+  createAccount(a: EconomyAccount) { sysDb.prepare('INSERT OR IGNORE INTO economy_accounts (userId, balanceCredits, monthlyBudgetCents, unlimited, periodStart, createdAt) VALUES (@userId, @balanceCredits, @monthlyBudgetCents, @unlimited, @periodStart, @createdAt)').run(a); },
+  updateAccount(userId: string, fields: Partial<EconomyAccount>) {
+    const sets: string[] = []; const params: Record<string, unknown> = { userId };
+    for (const k of ['balanceCredits', 'monthlyBudgetCents', 'unlimited', 'periodStart'] as const) {
+      if (fields[k] !== undefined) { sets.push(`${k} = @${k}`); params[k] = fields[k]; }
+    }
+    if (!sets.length) return;
+    sysDb.prepare(`UPDATE economy_accounts SET ${sets.join(', ')} WHERE userId = @userId`).run(params);
+  },
+  addBalance(userId: string, deltaCredits: number) { sysDb.prepare('UPDATE economy_accounts SET balanceCredits = balanceCredits + ? WHERE userId = ?').run(deltaCredits, userId); },
+  insertUsage(e: UsageEvent) { sysDb.prepare('INSERT INTO usage_events (id, userId, ts, kind, qty, usdCost, credits, meta) VALUES (@id, @userId, @ts, @kind, @qty, @usdCost, @credits, @meta)').run(e); },
+  spentSince(userId: string, sinceISO: string): number { return (sysDb.prepare("SELECT COALESCE(SUM(credits),0) c FROM usage_events WHERE userId = ? AND ts >= ? AND credits > 0").get(userId, sinceISO) as { c: number }).c; },
+  usageBreakdownSince(userId: string, sinceISO: string): { kind: string; qty: number; credits: number }[] { return sysDb.prepare("SELECT kind, COALESCE(SUM(qty),0) qty, COALESCE(SUM(credits),0) credits FROM usage_events WHERE userId = ? AND ts >= ? AND credits > 0 GROUP BY kind ORDER BY credits DESC").all(userId, sinceISO) as { kind: string; qty: number; credits: number }[]; },
+  recentUsage(userId: string, limit = 50): UsageEvent[] { return sysDb.prepare('SELECT * FROM usage_events WHERE userId = ? ORDER BY ts DESC LIMIT ?').all(userId, limit) as UsageEvent[]; },
+  allAccounts(): EconomyAccount[] { return sysDb.prepare('SELECT * FROM economy_accounts').all() as EconomyAccount[]; },
+};
+
 export interface UserRow { id: string; username: string; email: string; passHash: string; role: string; createdAt: string; }
 export const users = {
   count(): number { return (sysDb.prepare('SELECT COUNT(*) c FROM users').get() as { c: number }).c; },

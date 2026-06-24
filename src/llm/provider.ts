@@ -1,4 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { meterLlm } from '../economy/meter.js';
+import { assertBudget } from '../economy/budget.js';
 
 /**
  * A pluggable LLM backend. Big Dog's brain talks to one of these, so the same
@@ -39,7 +41,19 @@ export class AnthropicProvider implements LLMProvider {
     return this.model;
   }
 
+  /** Record token + web-search usage against the current user for billing. */
+  private meter(res: Anthropic.Message): void {
+    const u = (res as unknown as { usage?: { input_tokens?: number; output_tokens?: number; server_tool_use?: { web_search_requests?: number } } }).usage;
+    meterLlm({
+      inputTokens: u?.input_tokens ?? 0,
+      outputTokens: u?.output_tokens ?? 0,
+      webSearches: u?.server_tool_use?.web_search_requests ?? 0,
+      model: this.model,
+    });
+  }
+
   async complete(opts: { system: string; user: string; maxTokens?: number; schema?: object }): Promise<string> {
+    assertBudget();
     const res = await this.client.messages.create({
       model: this.model,
       max_tokens: opts.maxTokens ?? 1200,
@@ -48,6 +62,7 @@ export class AnthropicProvider implements LLMProvider {
       ...(opts.schema ? { output_config: { format: { type: 'json_schema', schema: opts.schema } } } : {}),
       messages: [{ role: 'user', content: opts.user }],
     } as Anthropic.MessageCreateParamsNonStreaming);
+    this.meter(res);
 
     return res.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')
@@ -57,6 +72,7 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   async webResearch(query: string): Promise<string> {
+    assertBudget();
     const res = await this.client.messages.create({
       model: this.model,
       max_tokens: 1200,
@@ -71,6 +87,7 @@ export class AnthropicProvider implements LLMProvider {
       ],
       tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 4 }],
     } as Anthropic.MessageCreateParamsNonStreaming);
+    this.meter(res);
 
     return res.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')
@@ -80,6 +97,7 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   async webProspect(criteria: string): Promise<string> {
+    assertBudget();
     const res = await this.client.messages.create({
       model: this.model,
       max_tokens: 3000,
@@ -101,6 +119,7 @@ export class AnthropicProvider implements LLMProvider {
       ],
       tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 8 }],
     } as Anthropic.MessageCreateParamsNonStreaming);
+    this.meter(res);
 
     return res.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')
@@ -110,6 +129,7 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   async webFindEmail(domain: string): Promise<string> {
+    assertBudget();
     const res = await this.client.messages.create({
       model: this.model,
       max_tokens: 600,
@@ -125,6 +145,7 @@ export class AnthropicProvider implements LLMProvider {
       ],
       tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }],
     } as Anthropic.MessageCreateParamsNonStreaming);
+    this.meter(res);
 
     return res.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')
@@ -134,6 +155,7 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   async webCompanyDomain(company: string): Promise<string> {
+    assertBudget();
     const res = await this.client.messages.create({
       model: this.model,
       max_tokens: 400,
@@ -147,6 +169,7 @@ export class AnthropicProvider implements LLMProvider {
       ],
       tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }],
     } as Anthropic.MessageCreateParamsNonStreaming);
+    this.meter(res);
 
     return res.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')

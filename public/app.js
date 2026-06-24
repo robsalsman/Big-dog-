@@ -1896,6 +1896,134 @@ window.uploadVoiceSample = async () => {
 };
 
 // ── Tabs ─────────────────────────────────────────────────────────────────
+// ── Billing & usage ──────────────────────────────────────────────────────
+const KIND_LABEL = {
+  llm: 'AI thinking (Claude)', web_search: 'Web research', sms: 'Text messages',
+  call: 'Phone calls', verify: 'Email verification', tts: 'Voice / TTS',
+  grant: 'Credits added', topup: 'Credits purchased',
+};
+const usd = (credits) => '$' + (Math.abs(credits) / 1000).toFixed(2);
+
+async function renderBilling() {
+  const el = $('#billing'); if (!el) return;
+  el.innerHTML = '<div class="muted">Loading…</div>';
+  let e;
+  try { e = await api('/api/economy'); } catch (err) { el.innerHTML = 'Error: ' + esc(err.message); return; }
+
+  const spent = usd(e.spentThisMonthCredits);
+  const cap = e.unlimited ? 'Unlimited' : (e.monthlyBudgetCents != null ? '$' + (e.monthlyBudgetCents / 100).toFixed(2) : 'Not set');
+  const pct = e.budgetUsedPct;
+  const bar = e.unlimited || pct == null ? '' : `
+    <div class="budget-bar"><div class="budget-fill ${pct >= 90 ? 'hot' : pct >= 70 ? 'warm' : ''}" style="width:${pct}%"></div></div>
+    <div class="muted small">${pct}% of your monthly budget used</div>`;
+
+  const breakdown = (e.breakdown || []).length
+    ? e.breakdown.map((b) => `<div class="row" style="padding:3px 0">
+        <span>${esc(KIND_LABEL[b.kind] || b.kind)}</span>
+        <span class="muted small">${usd(b.credits)}</span></div>`).join('')
+    : '<div class="muted small">No usage yet this month.</div>';
+
+  const recent = (e.recent || []).length
+    ? e.recent.map((r) => `<div class="row" style="padding:2px 0;border-bottom:1px solid var(--line)">
+        <span class="small">${esc(KIND_LABEL[r.kind] || r.kind)} ${r.qty ? `<span class="muted">· ${Math.round(r.qty).toLocaleString()}</span>` : ''}</span>
+        <span class="muted small">${r.credits < 0 ? '+' : ''}${usd(r.credits)} · ${fmtDate(r.ts)}</span></div>`).join('')
+    : '<div class="muted small">Nothing yet.</div>';
+
+  el.innerHTML = `
+    <div class="row" style="margin-bottom:12px"><h2>💳 Billing &amp; usage</h2><button class="btn small" onclick="renderBilling()">↻ Refresh</button></div>
+
+    <div class="card">
+      <div class="row">
+        <div><div class="muted small">Spent this month</div><div style="font-size:26px;font-weight:800">${spent}</div></div>
+        <div style="text-align:right"><div class="muted small">Monthly budget</div><div style="font-size:20px;font-weight:700">${esc(cap)}</div></div>
+      </div>
+      ${bar}
+    </div>
+
+    <div class="card">
+      <strong>Your monthly budget</strong>
+      <div class="muted small" style="margin:4px 0 10px">Big Dog spreads this across everything it does for you — and pauses non-urgent work before you go over. Set a cap, or run unlimited.</div>
+      <label class="row" style="cursor:pointer;margin-bottom:8px">
+        <span>Unlimited (no cap)</span>
+        <input type="checkbox" id="bg-unlimited" ${e.unlimited ? 'checked' : ''} onchange="document.getElementById('bg-amt').disabled = this.checked" />
+      </label>
+      <div class="row" style="gap:8px">
+        <input class="subj" id="bg-amt" type="number" min="0" step="5" placeholder="50" value="${e.monthlyBudgetCents != null ? (e.monthlyBudgetCents / 100) : ''}" ${e.unlimited ? 'disabled' : ''} style="flex:1" />
+        <span class="muted small">USD / month</span>
+        <button class="btn primary" onclick="saveBudget()">Save</button>
+      </div>
+      <div id="bg-status" class="muted small" style="margin-top:6px"></div>
+    </div>
+
+    <div class="card">
+      <strong>This month by category</strong>
+      <div style="margin-top:8px">${breakdown}</div>
+    </div>
+
+    <div class="card">
+      <strong>Recent activity</strong>
+      <div style="margin-top:8px;max-height:280px;overflow:auto">${recent}</div>
+    </div>
+
+    <div id="admin-economy"></div>`;
+
+  if (state.user && state.user.role === 'admin') renderAdminEconomy();
+}
+
+window.saveBudget = async () => {
+  const unlimited = $('#bg-unlimited').checked;
+  const monthlyUsd = $('#bg-amt').value;
+  $('#bg-status').textContent = 'Saving…';
+  try {
+    await api('/api/economy/budget', { method: 'POST', body: { unlimited, monthlyUsd } });
+    $('#bg-status').textContent = '✅ Saved.';
+    await load();
+    renderBilling();
+    toast('Budget updated. 🐕');
+  } catch (e) { $('#bg-status').textContent = 'Error: ' + e.message; }
+};
+
+async function renderAdminEconomy() {
+  const el = $('#admin-economy'); if (!el) return;
+  let a;
+  try { a = await api('/api/admin/economy'); } catch { return; }
+  const rows = a.users.map((u) => `<div class="row" style="padding:3px 0;border-bottom:1px solid var(--line)">
+      <span>${esc(u.username)} ${u.role === 'admin' ? '<span class="tag">admin</span>' : ''}</span>
+      <span class="muted small">${usd(u.spentThisMonthCredits)} this month · ${u.unlimited ? 'unlimited' : (u.monthlyBudgetCents != null ? '$' + (u.monthlyBudgetCents / 100).toFixed(0) + ' cap' : 'no cap')}</span>
+    </div>`).join('');
+  const r = a.rates;
+  el.innerHTML = `
+    <h2 style="margin-top:24px">🛠 Admin — economy</h2>
+    <div class="card">
+      <strong>Rate card</strong>
+      <div class="muted small" style="margin:4px 0 10px">Real provider costs (USD) and your markup. Credits = cost × markup (1000 credits = $1).</div>
+      <div class="rate-grid">
+        <label>Claude input $/1M tok<input class="subj" id="rt-in" type="number" step="0.01" value="${r.llmInputPerMTok}"></label>
+        <label>Claude output $/1M tok<input class="subj" id="rt-out" type="number" step="0.01" value="${r.llmOutputPerMTok}"></label>
+        <label>Web search $ each<input class="subj" id="rt-web" type="number" step="0.001" value="${r.webSearchEach}"></label>
+        <label>SMS $ each<input class="subj" id="rt-sms" type="number" step="0.0001" value="${r.smsEach}"></label>
+        <label>Call $ / min<input class="subj" id="rt-call" type="number" step="0.001" value="${r.callPerMin}"></label>
+        <label>Markup ×<input class="subj" id="rt-markup" type="number" step="0.1" value="${r.markup}"></label>
+      </div>
+      <div class="actions" style="margin-top:8px"><button class="btn primary" onclick="saveRates()">Save rate card</button><span id="rt-status" class="muted small"></span></div>
+    </div>
+    <div class="card">
+      <strong>Users (${a.users.length})</strong>
+      <div style="margin-top:8px">${rows || '<div class="muted small">No users yet.</div>'}</div>
+    </div>`;
+}
+
+window.saveRates = async () => {
+  const body = {
+    llmInputPerMTok: $('#rt-in').value, llmOutputPerMTok: $('#rt-out').value,
+    webSearchEach: $('#rt-web').value, smsEach: $('#rt-sms').value,
+    callPerMin: $('#rt-call').value, markup: $('#rt-markup').value,
+  };
+  $('#rt-status').textContent = 'Saving…';
+  try { await api('/api/admin/economy/rates', { method: 'POST', body }); $('#rt-status').textContent = '✅ Saved.'; toast('Rate card updated.'); }
+  catch (e) { $('#rt-status').textContent = 'Error: ' + e.message; }
+};
+
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
   document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === name));
@@ -1907,6 +2035,7 @@ function switchTab(name) {
   if (name === 'contacts') renderContacts();
   if (name === 'campaigns') renderCampaigns();
   if (name === 'repo') renderRepo();
+  if (name === 'billing') renderBilling();
   if (name === 'settings') renderSettings();
 }
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));
