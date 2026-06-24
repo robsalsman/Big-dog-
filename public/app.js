@@ -37,6 +37,34 @@ function dealVerifyBadge(notes) {
   const m = (notes || '').match(/^\[(verified|deliverable|catch-all)\]/);
   return m ? verifyBadge(m[1]) : '';
 }
+// Setup status panel — what's connected vs. left to do.
+function setupStatusCard() {
+  const s = (state && state.setup) || {};
+  const rows = [
+    { k: 'claude', label: 'Claude (the brain)', req: true, hint: 'Backend → Save & connect' },
+    { k: 'mailbox', label: 'Mailbox', req: true, hint: 'Mailboxes → Auto-detect' },
+    { k: 'password', label: 'Dashboard password', req: true, hint: 'Security' },
+    { k: 'verify', label: 'Email verification', req: false, hint: 'Email verification' },
+    { k: 'zoom', label: 'Zoom (meetings + transcripts)', req: false, hint: 'Video meetings' },
+    { k: 'twilio', label: 'Twilio (text/call)', req: false, hint: 'Text & calls' },
+    { k: 'voice', label: 'Voice (TTS)', req: false, hint: 'Bundled Kokoro / Chatterbox' },
+    { k: 'apollo', label: 'Apollo (optional lead source)', req: false, hint: '.env APOLLO_API_KEY' },
+    { k: 'calcom', label: 'Cal.com (optional)', req: false, hint: '.env CALCOM_API_KEY' },
+    { k: 'telegram', label: 'Telegram bot', req: false, hint: '.env TELEGRAM_*' },
+    { k: 'slack', label: 'Slack', req: false, hint: '.env SLACK_*' },
+  ];
+  const done = rows.filter((r) => s[r.k]).length;
+  const reqLeft = rows.filter((r) => r.req && !s[r.k]).length;
+  const item = (r) => `<div class="row" style="padding:3px 0">
+      <span>${s[r.k] ? '✅' : '⬜'} ${esc(r.label)} ${r.req ? '<span class="tag" style="opacity:.7">required</span>' : ''}</span>
+      <span class="muted small">${s[r.k] ? 'connected' : esc(r.hint)}</span>
+    </div>`;
+  return `<div class="card" style="border-left:3px solid ${reqLeft ? 'var(--hot)' : 'var(--accent)'}">
+    <strong>🔌 Setup status — ${done}/${rows.length} connected</strong>
+    ${reqLeft ? `<div class="small" style="color:var(--hot);margin:4px 0">${reqLeft} required item(s) left — Big Dog needs these to work.</div>` : '<div class="muted small" style="margin:4px 0">Core is ready. Optional integrations unlock more of the funnel.</div>'}
+    <div style="margin-top:6px">${rows.map(item).join('')}</div>
+  </div>`;
+}
 window.doLogin = async () => {
   try {
     await api('/api/auth/login', { method: 'POST', body: { password: $('#login-pw').value } });
@@ -1196,6 +1224,7 @@ async function renderSettings() {
   try { s = await api('/api/settings'); } catch (e) { el.innerHTML = 'Error: ' + esc(e.message); return; }
   const sel = (v) => (s.provider === v ? 'selected' : '');
   el.innerHTML = `
+    ${setupStatusCard()}
     <h2>Settings — your AI backend</h2>
     <div class="muted small" style="margin-bottom:14px">
       Pick who powers Big Dog and drop in your own key. Stored locally on this machine — keys never leave it except to call the model you choose.
