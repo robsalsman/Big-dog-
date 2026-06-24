@@ -31,6 +31,7 @@ import { calcomConfigured, syncCalcomBookings } from './calcom.js';
 import { zoomConfigured, createZoomMeeting, saveZoomCreds, publicZoom, testZoom, getMeetingTranscript } from './zoom.js';
 import { twilioConfigured, saveTwilioCreds, publicTwilio, testTwilio, sendSms, makeCall, loadTwilioCreds } from './twilio.js';
 import { bookFromMessage } from './booking.js';
+import { handleOwnerSms } from './smscommands.js';
 import { voiceConfigured, loadVoiceSettings, saveVoiceSettings, publicVoice, testVoice, synthesize, saveVoiceSample, voiceFilePath } from './voice.js';
 import { browserConfigured, browserReady } from './browser.js';
 import type { BigDogBrain } from './brain.js';
@@ -69,33 +70,10 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const body = String(req.body?.Body ?? '').trim();
     const owner = loadTwilioCreds().ownerMobile;
     if (!owner || digits(from) !== digits(owner)) return xml(''); // ignore anyone but the owner
-    const lc = body.toLowerCase();
-    const queue = messages.meetingRequests();
-
-    if (/^(no|skip|n|not now)\b/.test(lc)) {
-      if (queue[0]) { messages.setMeetingReq(queue[0].id, 0); const left = messages.meetingRequests(); return xml(`Skipped ${queue[0].fromName || 'that one'}.${left[0] ? ` Next: ${left[0].fromName || left[0].fromEmail}. Reply YES to book.` : ' Queue clear. 🐕'}`); }
-      return xml('Nothing pending to skip.');
-    }
-    const target = queue[0];
-    if (!target) return xml('Nothing waiting in your Ready-to-book queue. 🐕');
-    let whenISO: string | undefined;
-    const isYes = /^(y|yes|yep|ok|okay|book|confirm|sure|do it|go)\b/.test(lc);
-    if (!isYes && brain.live) {
-      try {
-        const out = await brain.raw(
-          `Parse a meeting time from "${body}" as a single ISO 8601 datetime (next occurrence; business hours if vague). Return ONLY JSON {"whenISO":"..."} or {"whenISO":null}. NOW: ${new Date().toISOString()}`,
-          { type: 'object', additionalProperties: false, properties: { whenISO: { type: ['string', 'null'] } }, required: ['whenISO'] }, 150,
-        );
-        const w = JSON.parse(out.slice(out.indexOf('{'), out.lastIndexOf('}') + 1)).whenISO;
-        if (w) whenISO = w;
-      } catch { /* ignore */ }
-    }
     try {
-      const r = await bookFromMessage(target, { whenISO }, brain, cfg);
-      const next = messages.meetingRequests()[0];
-      return xml(`✅ Booked ${r.contactName} for ${r.whenLabel}${r.join ? ' (Zoom + invite sent)' : r.sent ? ' (invite sent)' : ' (confirmation queued)'}.${next ? ` Next: ${next.fromName || next.fromEmail}. Reply YES.` : ' Queue clear. 🐕'}`);
+      return xml(await handleOwnerSms(body, brain, cfg));
     } catch (err) {
-      return xml(`Couldn't book that: ${(err as Error).message}`);
+      return xml(`Error: ${(err as Error).message}`);
     }
   });
 
