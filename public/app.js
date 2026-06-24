@@ -127,7 +127,27 @@ async function load() {
   const pill = $('#brain-pill');
   pill.textContent = state.brainLive ? `brain: ${state.backend}` : 'brain: offline';
   pill.className = 'pill ' + (state.brainLive ? 'live' : 'offline');
+  renderSetupBanner();
   renderAll();
+}
+
+// Guided-setup banner — shows on the dashboard until the essentials are connected.
+function renderSetupBanner() {
+  const el = $('#setup-banner'); if (!el) return;
+  const s = state.setup || {};
+  const required = [
+    { k: 'claude', label: 'Connect Claude' },
+    { k: 'mailbox', label: 'Add your mailbox' },
+    { k: 'password', label: 'Set a password' },
+  ];
+  const missing = required.filter((r) => !s[r.k]);
+  if (!missing.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = '';
+  el.innerHTML = `
+    <div class="setup-banner">
+      <span>⚠ Finish setup — ${missing.length} required item${missing.length > 1 ? 's' : ''} left: <strong>${missing.map((m) => esc(m.label)).join(' · ')}</strong></span>
+      <button class="btn small primary" onclick="switchTab('settings')">Finish setup →</button>
+    </div>`;
 }
 
 function renderAll() {
