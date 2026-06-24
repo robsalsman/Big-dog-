@@ -2,6 +2,7 @@ import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 import { messages, deals, events, drafts, memories, activity, suppressed, contacts, sequences, enrollments, attachments } from './db.js';
 import { saveAttachment, resolveAttachments } from './repo.js';
 import { createSequence, enrollContacts, runDueEnrollments, DEFAULT_SEQUENCE_STEPS } from './sequences.js';
@@ -30,6 +31,7 @@ import { calcomConfigured, syncCalcomBookings } from './calcom.js';
 import { zoomConfigured, createZoomMeeting, saveZoomCreds, publicZoom, testZoom, getMeetingTranscript } from './zoom.js';
 import { twilioConfigured, saveTwilioCreds, publicTwilio, testTwilio, sendSms, makeCall, loadTwilioCreds } from './twilio.js';
 import { bookFromMessage } from './booking.js';
+import { voiceConfigured, loadVoiceSettings, saveVoiceSettings, publicVoice, testVoice, synthesize, saveVoiceSample, voiceFilePath } from './voice.js';
 import { browserConfigured, browserReady } from './browser.js';
 import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
@@ -48,6 +50,14 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
 
   // Health check for proxies / uptime monitors (unauthenticated).
   app.get('/healthz', (_req, res) => res.json({ ok: true, ts: Date.now() }));
+
+  // Serve generated call audio (unauthenticated so Twilio can fetch it).
+  app.get('/voice/:id.mp3', (req, res) => {
+    const path = voiceFilePath(req.params.id);
+    if (!existsSync(path)) return res.status(404).end();
+    res.set('Content-Type', 'audio/mpeg');
+    res.sendFile(path);
+  });
 
   // ── Twilio inbound SMS: reply YES (or a time) to book from your phone ──
   // Unauthenticated by design (Twilio can't log in); gated to the owner's number.
@@ -152,6 +162,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       calcom: { configured: calcomConfigured(cfg), bookingUrl: cfg.calcom?.bookingUrl ?? '' },
       zoom: { configured: zoomConfigured() },
       twilio: { configured: twilioConfigured() },
+      voice: { configured: voiceConfigured() },
       browser: { configured: browserConfigured(), ready: browserReady() },
       prospect: activeProvider(cfg),
       messages: messages.recent(100),
@@ -560,8 +571,39 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   app.post('/api/call', async (req, res) => {
     const message = String(req.body?.message ?? '').trim();
     if (!message) return res.status(400).json({ error: 'empty message' });
-    try { const r = await makeCall(message, req.body?.to ? String(req.body.to) : undefined); logActivity('call', `Called ${req.body?.to || 'you'}`); res.json({ ok: true, sid: r.sid }); }
+    try {
+      let playUrl: string | undefined;
+      if (voiceConfigured()) {
+        try {
+          const { id } = await synthesize(message);
+          playUrl = `${req.protocol}://${req.get('host')}/voice/${id}.mp3`;
+        } catch (e) { logActivity('error', `Voice synth failed, using built-in TTS: ${(e as Error).message}`); }
+      }
+      const r = await makeCall(message, req.body?.to ? String(req.body.to) : undefined, { playUrl, voicemail: !!req.body?.voicemail });
+      logActivity('call', `Called ${req.body?.to || 'you'}${playUrl ? ' (Big Dog voice)' : ''}`);
+      res.json({ ok: true, sid: r.sid, voice: !!playUrl });
+    } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+  });
+
+  // ── Voice (TTS for calls/voicemails) ────────────────────────────────
+  app.get('/api/voice', (_req, res) => res.json(publicVoice()));
+  app.post('/api/voice', (req, res) => { saveVoiceSettings(req.body ?? {}); res.json(publicVoice()); });
+  app.post('/api/voice/test', async (_req, res) => res.json(await testVoice()));
+  app.post('/api/voice/sample', (req, res) => {
+    const data = String(req.body?.data ?? '');
+    if (!data) return res.status(400).json({ error: 'no audio data' });
+    try { res.json(saveVoiceSample(data, String(req.body?.mime ?? ''))); }
     catch (err) { res.status(500).json({ error: (err as Error).message }); }
+  });
+  // Synthesize a short preview the browser can play.
+  app.post('/api/voice/preview', async (req, res) => {
+    const text = String(req.body?.text ?? "What's up, Big Dog!? This is how I'll sound on your calls.").slice(0, 400);
+    try {
+      const { id } = await synthesize(text, req.body?.voice ? String(req.body.voice) : undefined);
+      res.json({ ok: true, url: `/voice/${id}.mp3` });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   // ── Zoom (video meetings) ───────────────────────────────────────────

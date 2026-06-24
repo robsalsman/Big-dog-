@@ -71,17 +71,28 @@ export async function sendSms(body: string, to?: string, c: TwilioCreds = loadTw
   return { sid: d.sid ?? '' };
 }
 
-/** Place a voice call that speaks `message`. `to` defaults to the owner's mobile. */
-export async function makeCall(message: string, to?: string, c: TwilioCreds = loadTwilioCreds()): Promise<{ sid: string }> {
+/**
+ * Place a voice call. With `playUrl` it plays Big Dog's generated audio (cloned
+ * or built-in voice); otherwise it falls back to Twilio's built-in TTS. Set
+ * `voicemail` to wait for the beep and drop the message as a voicemail.
+ */
+export async function makeCall(
+  message: string,
+  to?: string,
+  opts: { playUrl?: string; voicemail?: boolean } = {},
+  c: TwilioCreds = loadTwilioCreds(),
+): Promise<{ sid: string }> {
   if (!twilioConfigured(c)) throw new Error('Twilio not configured.');
   const dest = (to || c.ownerMobile || '').trim();
   if (!dest) throw new Error('No destination number (set your mobile in Settings).');
-  const twiml = `<Response><Say voice="Polly.Joanna">${escapeXml(message.slice(0, 1200))}</Say></Response>`;
-  const form = new URLSearchParams({ To: dest, From: c.fromNumber, Twiml: twiml });
+  const inner = opts.playUrl ? `<Play>${escapeXml(opts.playUrl)}</Play>` : `<Say voice="Polly.Joanna">${escapeXml(message.slice(0, 1200))}</Say>`;
+  const twiml = `<Response>${inner}</Response>`;
+  const params: Record<string, string> = { To: dest, From: c.fromNumber, Twiml: twiml };
+  if (opts.voicemail) params.MachineDetection = 'DetectMessageEnd'; // wait for the greeting, then drop
   const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(c.accountSid)}/Calls.json`, {
     method: 'POST',
     headers: { Authorization: authHeader(c), 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: form,
+    body: new URLSearchParams(params),
     signal: AbortSignal.timeout(12_000),
   });
   if (!res.ok) throw new Error(`Twilio call ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);

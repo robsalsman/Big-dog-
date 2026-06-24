@@ -1305,6 +1305,38 @@ async function renderSettings() {
     </div>
 
     <div class="card" style="margin-top:22px">
+      <strong>🗣️ Big Dog's voice (calls &amp; voicemail)</strong> <span id="voice-state" class="tag">checking…</span>
+      <div class="muted small" style="margin:4px 0 8px">
+        High-quality text-to-speech for phone calls, powered by open-source engines you self-host
+        (from <a href="https://github.com/wildminder/awesome-ai-voice" target="_blank">awesome-ai-voice</a>) via an OpenAI-compatible endpoint:
+        <strong>Kokoro</strong> (CPU-friendly, built-in voices) or <strong>Chatterbox</strong> (clone your own voice). Leave off to use Twilio's built-in TTS.
+      </div>
+      <label class="small muted">Engine endpoint (OpenAI-compatible <code>/v1</code>)</label>
+      <input class="subj" id="voice-baseUrl" placeholder="http://tts:8880/v1  (or https://api.openai.com/v1)" style="width:100%" />
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input class="subj" id="voice-model" placeholder="model (e.g. kokoro)" style="flex:1" />
+        <input class="subj" id="voice-apiKey" type="password" placeholder="API key (if required)" style="flex:1" />
+      </div>
+      <label class="small muted">Built-in voice</label>
+      <select id="voice-voice" class="subj" style="width:100%"></select>
+      <div class="card" style="background:var(--bg);margin-top:8px">
+        <strong class="small">🧬 Clone your voice</strong>
+        <div class="muted small" style="margin:4px 0 6px">Upload ~20–30s of clean speech, then enter the cloned-voice name your engine assigns (Chatterbox/XTTS). Big Dog will use it on calls.</div>
+        <input type="file" id="voice-sample" accept="audio/*" class="subj" />
+        <input class="subj" id="voice-cloneName" placeholder="cloned voice name (then pick it as the voice)" style="width:100%" />
+        <button class="btn small" onclick="uploadVoiceSample()">⬆ Upload sample</button>
+        <span id="voice-sample-status" class="muted small"></span>
+      </div>
+      <div class="actions" style="margin-top:8px">
+        <button class="btn primary" onclick="saveVoice()">💾 Save</button>
+        <button class="btn" onclick="testVoiceBtn()">Test</button>
+        <button class="btn" onclick="previewVoice()">🔊 Preview</button>
+        <span id="voice-status" class="muted small"></span>
+      </div>
+      <audio id="voice-audio" style="display:none"></audio>
+    </div>
+
+    <div class="card" style="margin-top:22px">
       <strong>🔒 Security</strong>
       <div class="muted small" id="auth-state" style="margin:4px 0 8px">Checking…</div>
       <input class="subj" id="pw-current" type="password" placeholder="Current password (only when changing)" />
@@ -1367,6 +1399,7 @@ async function renderSettings() {
   loadSuppressed();
   loadZoom();
   loadTwilio();
+  loadVoice();
 }
 
 async function loadProfile() {
@@ -1603,6 +1636,55 @@ window.textMeTest = async () => {
   $('#twilio-status').textContent = 'Sending…';
   try { await api('/api/sms', { method: 'POST', body: { body: "What's up, Big Dog!? Your text alerts are live. 🐕" } }); $('#twilio-status').textContent = '✅ Sent — check your phone.'; }
   catch (e) { $('#twilio-status').textContent = 'Error: ' + e.message; }
+};
+
+async function loadVoice() {
+  try {
+    const v = await api('/api/voice');
+    const tag = $('#voice-state'); if (tag) { tag.textContent = v.configured ? 'on' : 'off (Twilio TTS)'; tag.className = 'tag ' + (v.configured ? 'warm' : ''); }
+    if ($('#voice-baseUrl')) $('#voice-baseUrl').value = v.baseUrl || '';
+    if ($('#voice-model')) $('#voice-model').value = v.model || '';
+    if ($('#voice-cloneName')) $('#voice-cloneName').value = v.cloneName || '';
+    const sel = $('#voice-voice');
+    if (sel) {
+      const opts = (v.builtins || []).map((b) => `<option value="${esc(b.id)}">${esc(b.label)}</option>`);
+      if (v.cloneName) opts.unshift(`<option value="${esc(v.cloneName)}">🧬 ${esc(v.cloneName)} (your cloned voice)</option>`);
+      sel.innerHTML = opts.join('');
+      sel.value = v.voice || (v.builtins[0] && v.builtins[0].id) || '';
+    }
+  } catch { /* not authed */ }
+}
+function voiceBody() {
+  return { provider: $('#voice-baseUrl').value.trim() ? 'openai' : 'off', baseUrl: $('#voice-baseUrl').value.trim(), apiKey: $('#voice-apiKey').value, model: $('#voice-model').value.trim(), voice: $('#voice-voice').value, cloneName: $('#voice-cloneName').value.trim() };
+}
+window.saveVoice = async () => {
+  $('#voice-status').textContent = 'Saving…';
+  try { await api('/api/voice', { method: 'POST', body: voiceBody() }); await loadVoice(); $('#voice-status').textContent = '✅ Saved.'; toast('Voice settings saved. 🐕'); }
+  catch (e) { $('#voice-status').textContent = 'Error: ' + e.message; }
+};
+window.testVoiceBtn = async () => {
+  $('#voice-status').textContent = 'Testing…';
+  try { const t = await api('/api/voice/test', { method: 'POST' }); $('#voice-status').textContent = (t.ok ? '✅ ' : '❌ ') + t.detail; }
+  catch (e) { $('#voice-status').textContent = 'Error: ' + e.message; }
+};
+window.previewVoice = async () => {
+  $('#voice-status').textContent = '🔊 Generating…';
+  try {
+    await api('/api/voice', { method: 'POST', body: voiceBody() }); // save first so preview uses current settings
+    const r = await api('/api/voice/preview', { method: 'POST', body: { voice: $('#voice-voice').value } });
+    const a = $('#voice-audio'); a.src = r.url; a.play();
+    $('#voice-status').textContent = '🔊 Playing preview.';
+  } catch (e) { $('#voice-status').textContent = 'Error: ' + e.message; }
+};
+window.uploadVoiceSample = async () => {
+  const f = $('#voice-sample').files[0];
+  if (!f) { $('#voice-sample-status').textContent = 'Pick an audio file first.'; return; }
+  $('#voice-sample-status').textContent = 'Uploading…';
+  try {
+    const data = await fileToBase64(f);
+    await api('/api/voice/sample', { method: 'POST', body: { data, mime: f.type } });
+    $('#voice-sample-status').textContent = '✅ Sample uploaded. Register it on your engine, then set the cloned name above.';
+  } catch (e) { $('#voice-sample-status').textContent = 'Error: ' + e.message; }
 };
 
 // ── Tabs ─────────────────────────────────────────────────────────────────
