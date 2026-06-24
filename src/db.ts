@@ -12,6 +12,8 @@ import type {
   DealStage,
   Account,
   Contact,
+  Sequence,
+  Enrollment,
 } from './types.js';
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
@@ -140,6 +142,29 @@ db.exec(`
     firstSeen TEXT,
     lastSeen TEXT,
     updatedAt TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS sequences (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    steps TEXT,
+    active INTEGER DEFAULT 1,
+    createdAt TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS enrollments (
+    id TEXT PRIMARY KEY,
+    sequenceId TEXT,
+    email TEXT,
+    name TEXT,
+    company TEXT,
+    accountId TEXT,
+    dealId TEXT,
+    step INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'active',
+    startedAt TEXT,
+    nextRunAt TEXT,
+    lastError TEXT
   );
 
   CREATE INDEX IF NOT EXISTS idx_messages_date ON messages(date DESC);
@@ -396,6 +421,49 @@ export const contacts = {
   suggest(q: string, limit = 8): Contact[] {
     const like = `%${q}%`;
     return db.prepare('SELECT * FROM contacts WHERE email LIKE ? OR name LIKE ? OR company LIKE ? ORDER BY lastSeen DESC LIMIT ?').all(like, like, like, limit) as Contact[];
+  },
+};
+
+// ── Drip sequences + enrollments ─────────────────────────────────────────
+export const sequences = {
+  all(): Sequence[] {
+    return (db.prepare('SELECT * FROM sequences ORDER BY createdAt DESC').all() as any[]).map((r) => ({
+      id: r.id, name: r.name, steps: JSON.parse(r.steps || '[]'), active: !!r.active, createdAt: r.createdAt,
+    }));
+  },
+  get(id: string): Sequence | undefined {
+    const r = db.prepare('SELECT * FROM sequences WHERE id = ?').get(id) as any;
+    return r ? { id: r.id, name: r.name, steps: JSON.parse(r.steps || '[]'), active: !!r.active, createdAt: r.createdAt } : undefined;
+  },
+  upsert(s: Sequence) {
+    db.prepare('INSERT INTO sequences (id, name, steps, active, createdAt) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, steps=excluded.steps, active=excluded.active')
+      .run(s.id, s.name, JSON.stringify(s.steps), s.active ? 1 : 0, s.createdAt);
+  },
+  delete(id: string) {
+    db.prepare('DELETE FROM sequences WHERE id = ?').run(id);
+    db.prepare('DELETE FROM enrollments WHERE sequenceId = ?').run(id);
+  },
+};
+
+export const enrollments = {
+  add(e: Enrollment) {
+    db.prepare(`INSERT INTO enrollments (id, sequenceId, email, name, company, accountId, dealId, step, status, startedAt, nextRunAt, lastError)
+      VALUES (@id, @sequenceId, @email, @name, @company, @accountId, @dealId, @step, @status, @startedAt, @nextRunAt, @lastError)`).run(e);
+  },
+  update(e: Enrollment) {
+    db.prepare('UPDATE enrollments SET step=@step, status=@status, nextRunAt=@nextRunAt, lastError=@lastError WHERE id=@id').run(e);
+  },
+  all(): Enrollment[] {
+    return db.prepare('SELECT * FROM enrollments ORDER BY nextRunAt ASC').all() as Enrollment[];
+  },
+  due(nowIso: string): Enrollment[] {
+    return db.prepare("SELECT * FROM enrollments WHERE status = 'active' AND nextRunAt <= ? ORDER BY nextRunAt ASC LIMIT 50").all(nowIso) as Enrollment[];
+  },
+  activeForEmail(email: string): Enrollment[] {
+    return db.prepare("SELECT * FROM enrollments WHERE lower(email) = ? AND status = 'active'").all((email || '').toLowerCase().trim()) as Enrollment[];
+  },
+  existsActive(sequenceId: string, email: string): boolean {
+    return !!db.prepare("SELECT 1 FROM enrollments WHERE sequenceId = ? AND lower(email) = ? AND status = 'active'").get(sequenceId, (email || '').toLowerCase().trim());
   },
 };
 

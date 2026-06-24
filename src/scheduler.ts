@@ -5,6 +5,7 @@ import { calcomConfigured, syncCalcomBookings } from './calcom.js';
 import { runCadenceSweep } from './cadence.js';
 import { allAccounts } from './accounts.js';
 import { sendDueDrafts } from './scheduledsend.js';
+import { runDueEnrollments } from './sequences.js';
 import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
 import type { AccountsConfig } from './types.js';
@@ -37,6 +38,9 @@ export function startScheduler(
           const b = await syncCalcomBookings(cfg);
           if (b > 0) console.log(`[big-dog] pulled ${b} Cal.com booking(s)`);
         }
+        // Advance any due drip-sequence touches.
+        const touches = await runDueEnrollments(brain, cfg);
+        if (touches > 0) console.log(`[big-dog] drip worker: ${touches} touch(es)`);
       } catch (err) {
         console.error('[big-dog] sync error:', (err as Error).message);
       }

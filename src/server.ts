@@ -2,7 +2,8 @@ import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { messages, deals, events, drafts, memories, activity, suppressed, contacts } from './db.js';
+import { messages, deals, events, drafts, memories, activity, suppressed, contacts, sequences, enrollments } from './db.js';
+import { createSequence, enrollContacts, runDueEnrollments, DEFAULT_SEQUENCE_STEPS } from './sequences.js';
 import { logActivity } from './activity.js';
 import { runAgent } from './agent/agent.js';
 import { runCadenceSweep } from './cadence.js';
@@ -331,6 +332,45 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // ── Drip sequences (multi-touch campaigns) ──────────────────────────
+  app.get('/api/sequences', (_req, res) => {
+    res.json({ sequences: sequences.all(), enrollments: enrollments.all(), defaultSteps: DEFAULT_SEQUENCE_STEPS });
+  });
+  app.post('/api/sequences', (req, res) => {
+    const name = String(req.body?.name ?? '').trim() || 'New sequence';
+    const steps = Array.isArray(req.body?.steps) ? req.body.steps : DEFAULT_SEQUENCE_STEPS;
+    if (req.body?.id) {
+      const existing = sequences.get(String(req.body.id));
+      if (!existing) return res.status(404).json({ error: 'no such sequence' });
+      const seq = { ...existing, name, steps, active: req.body?.active !== false };
+      sequences.upsert(seq);
+      return res.json({ sequence: seq });
+    }
+    res.json({ sequence: createSequence(name, steps) });
+  });
+  app.delete('/api/sequences/:id', (req, res) => { sequences.delete(req.params.id); res.json({ ok: true }); });
+  app.post('/api/sequences/:id/enroll', (req, res) => {
+    const people = Array.isArray(req.body?.contacts) ? req.body.contacts
+      : String(req.body?.emails ?? '').split(/[,\n;]/).map((e: string) => ({ email: e.trim() })).filter((p: any) => p.email);
+    if (!people.length) return res.status(400).json({ error: 'no contacts to enroll' });
+    try {
+      res.json(enrollContacts(req.params.id, people, req.body?.accountId));
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+  app.post('/api/enrollments/:id/stop', (req, res) => {
+    const e = enrollments.all().find((x) => x.id === req.params.id);
+    if (!e) return res.status(404).json({ error: 'not found' });
+    enrollments.update({ ...e, status: 'stopped', lastError: null });
+    res.json({ ok: true });
+  });
+  // Manually advance due touches now (otherwise the scheduler does it).
+  app.post('/api/sequences/run', async (_req, res) => {
+    try { res.json({ produced: await runDueEnrollments(brain, cfg) }); }
+    catch (err) { res.status(500).json({ error: (err as Error).message }); }
   });
 
   // ── Contacts (CRM) ──────────────────────────────────────────────────

@@ -6,6 +6,7 @@ import type { AccountsConfig, Deal, CalendarEvent, Draft } from './types.js';
 import { allAccounts } from './accounts.js';
 import { notifyAll } from './notify.js';
 import { logActivity } from './activity.js';
+import { stopEnrollmentsOnReply } from './sequences.js';
 
 const NO_REPLY = /no-?reply|do-?not-?reply|notifications?@|mailer-daemon|postmaster|@.*\.(amazonaws|sendgrid|mailchimp)/i;
 
@@ -25,6 +26,8 @@ export async function triageNewMail(
   let processed = 0;
 
   for (const m of pending) {
+    // A reply ends any active drip sequence for that contact (engagement rule).
+    if (m.fromEmail) stopEnrollmentsOnReply(m.fromEmail);
     const existingDeal = m.fromEmail ? deals.findByContact(m.fromEmail) ?? null : null;
     const memory = m.fromEmail ? memories.recall(m.fromEmail) : '';
     const analysis = await brain.analyze(m, existingDeal, memory);

@@ -97,6 +97,34 @@ export interface Draft {
   sendAt?: string | null; // schedule a send for later
 }
 
+// ── Drip sequences (inspired by Dittofeed journeys / Parcelvoy campaigns) ──
+export interface SequenceStep {
+  dayOffset: number; // days after enrollment to send this step
+  subject: string;
+  instruction: string; // what this touch should say (AI-personalized in your voice)
+}
+export interface Sequence {
+  id: string;
+  name: string;
+  steps: SequenceStep[];
+  active: boolean;
+  createdAt: string;
+}
+export interface Enrollment {
+  id: string;
+  sequenceId: string;
+  email: string;
+  name: string;
+  company: string;
+  accountId: string;
+  dealId: string | null;
+  step: number; // next step index to send
+  status: 'active' | 'completed' | 'stopped' | 'replied';
+  startedAt: string;
+  nextRunAt: string;
+  lastError: string | null;
+}
+
 export interface Contact {
   email: string;
   name: string;

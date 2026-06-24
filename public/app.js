@@ -360,6 +360,93 @@ window.saveContact = async (email) => {
   } catch (e) { $('#ct-status').textContent = 'Error: ' + e.message; }
 };
 
+// ── Drip campaigns (sequences) ───────────────────────────────────────────
+let campData = { sequences: [], enrollments: [], defaultSteps: [] };
+async function renderCampaigns() {
+  const el = $('#campaigns');
+  el.innerHTML = '<div class="muted">Loading campaigns…</div>';
+  try {
+    campData = await api('/api/sequences');
+    const seqs = campData.sequences;
+    const stepsToShow = (window.__newSteps && window.__newSteps.length) ? window.__newSteps : campData.defaultSteps;
+    const stepRows = stepsToShow.map((s, i) => `
+      <div class="row" style="gap:6px;margin:4px 0">
+        <input class="subj" id="step-day-${i}" type="number" value="${s.dayOffset}" style="width:70px" title="day" />
+        <input class="subj" id="step-subj-${i}" value="${esc(s.subject)}" placeholder="subject" style="flex:1" />
+        <input class="subj" id="step-instr-${i}" value="${esc(s.instruction)}" placeholder="what this touch should say" style="flex:2" />
+      </div>`).join('');
+    el.innerHTML = `
+      <div class="row" style="margin-bottom:6px"><h2 style="margin:0">Campaigns — automated drip sequences</h2>
+        <button class="btn small" onclick="runDripNow()">▶ Run due touches now</button></div>
+      <div class="muted small" style="margin-bottom:12px">Multi-touch follow-ups in your voice (inspired by Dittofeed/Parcelvoy). Each touch is personalized and queued for approval; the sequence auto-stops the moment a contact replies or opts out.</div>
+
+      <div class="card">
+        <strong>➕ New sequence</strong>
+        <input class="subj" id="seq-name" placeholder="Sequence name (e.g. Cold outreach)" style="width:100%;margin:6px 0" />
+        <div class="muted small">Steps — <em>day</em> (after enrollment), subject, and what to say:</div>
+        <div id="seq-steps">${stepRows}</div>
+        <div class="actions">
+          <button class="btn small" onclick="addStep()">+ Step</button>
+          <button class="btn small primary" onclick="saveSequence()">Save sequence</button>
+          <span id="seq-status" class="muted small"></span>
+        </div>
+      </div>
+
+      ${seqs.length ? seqs.map((s) => {
+        const active = campData.enrollments.filter((e) => e.sequenceId === s.id && e.status === 'active').length;
+        const total = campData.enrollments.filter((e) => e.sequenceId === s.id).length;
+        return `<div class="card">
+          <div class="row"><div><strong>${esc(s.name)}</strong> <span class="muted small">· ${s.steps.length} touches · ${active} active / ${total} enrolled</span></div>
+            <button class="btn small ghost" onclick="deleteSequence('${s.id}')">Delete</button></div>
+          <textarea class="edit" id="enroll-${s.id}" placeholder="Paste emails to enroll (comma or newline separated)…" style="min-height:54px"></textarea>
+          <div class="actions">
+            <button class="btn small primary" onclick="enrollSeq('${s.id}')">Enroll contacts</button>
+            <span id="enroll-status-${s.id}" class="muted small"></span>
+          </div>
+        </div>`;
+      }).join('') : ''}
+
+      <div class="card">
+        <strong>Enrollments</strong>
+        <div style="margin-top:8px">${campData.enrollments.length ? campData.enrollments.slice(0, 100).map((e) => {
+          const seq = seqs.find((s) => s.id === e.sequenceId);
+          const tag = e.status === 'active' ? 'warm' : e.status === 'replied' ? 'good' : '';
+          return `<div class="row" style="padding:3px 0">
+            <span class="small">${esc(e.email)} <span class="muted">· ${esc(seq ? seq.name : '—')} · touch ${e.step + 1}</span> <span class="tag ${tag}">${e.status}</span></span>
+            <span class="muted small">${e.status === 'active' ? 'next ' + fmtDate(e.nextRunAt) : ''} ${e.status === 'active' ? `<button class="btn small ghost" onclick="stopEnrollment('${e.id}')">Stop</button>` : ''}</span>
+          </div>`;
+        }).join('') : '<div class="muted small">No one enrolled yet.</div>'}</div>
+      </div>`;
+  } catch (e) { el.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+}
+function collectSteps() {
+  const steps = [];
+  let i = 0;
+  while ($('#step-subj-' + i)) {
+    steps.push({ dayOffset: Number($('#step-day-' + i).value || 0), subject: $('#step-subj-' + i).value.trim(), instruction: $('#step-instr-' + i).value.trim() });
+    i++;
+  }
+  return steps.filter((s) => s.subject || s.instruction);
+}
+window.addStep = () => { window.__newSteps = collectSteps(); window.__newSteps.push({ dayOffset: 21, subject: '', instruction: '' }); renderCampaigns(); };
+window.saveSequence = async () => {
+  const name = $('#seq-name').value.trim();
+  if (!name) { $('#seq-status').textContent = 'Name it first.'; return; }
+  const steps = collectSteps();
+  if (!steps.length) { $('#seq-status').textContent = 'Add at least one step.'; return; }
+  try { await api('/api/sequences', { method: 'POST', body: { name, steps } }); window.__newSteps = null; toast('Sequence saved. 🐕'); renderCampaigns(); }
+  catch (e) { $('#seq-status').textContent = 'Error: ' + e.message; }
+};
+window.deleteSequence = async (id) => { if (!confirm('Delete this sequence and its enrollments?')) return; try { await api('/api/sequences/' + id, { method: 'DELETE' }); renderCampaigns(); } catch (e) { toast('Error: ' + e.message); } };
+window.enrollSeq = async (id) => {
+  const emails = $('#enroll-' + id).value.trim();
+  if (!emails) { $('#enroll-status-' + id).textContent = 'Paste some emails.'; return; }
+  try { const r = await api('/api/sequences/' + id + '/enroll', { method: 'POST', body: { emails } }); $('#enroll-status-' + id).textContent = `✅ Enrolled ${r.enrolled}, skipped ${r.skipped}.`; renderCampaigns(); }
+  catch (e) { $('#enroll-status-' + id).textContent = 'Error: ' + e.message; }
+};
+window.stopEnrollment = async (id) => { try { await api('/api/enrollments/' + id + '/stop', { method: 'POST' }); renderCampaigns(); } catch (e) { toast('Error: ' + e.message); } };
+window.runDripNow = async () => { try { const r = await api('/api/sequences/run', { method: 'POST' }); toast(`Produced ${r.produced} touch(es). Check Drafts.`); await load(); renderCampaigns(); } catch (e) { toast('Error: ' + e.message); } };
+
 // ── Sent mailbox ─────────────────────────────────────────────────────────
 async function renderSent() {
   const el = $('#sent');
@@ -1261,6 +1348,7 @@ function switchTab(name) {
   if (name === 'activity') renderActivity();
   if (name === 'sent') renderSent();
   if (name === 'contacts') renderContacts();
+  if (name === 'campaigns') renderCampaigns();
   if (name === 'settings') renderSettings();
 }
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));
