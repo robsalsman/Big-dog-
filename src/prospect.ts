@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { deals, memories, contacts } from './db.js';
-import { findEmail, guessEmail, type EmailResult } from './emailfinder.js';
+import { findEmail, guessEmail, mxHost, type EmailResult } from './emailfinder.js';
 import { learnDomainPattern } from './patternlearner.js';
 import type { AppConfig } from './config.js';
 import type { BigDogBrain } from './brain.js';
@@ -217,30 +217,45 @@ export async function enrichRows(
 export async function findProspects(criteria: string, cfg: AppConfig, brain: BigDogBrain): Promise<Prospect[]> {
   const useApollo = cfg.prospectProvider === 'apollo' || (cfg.prospectProvider === 'auto' && !!cfg.apolloKey);
   const raw = useApollo && cfg.apolloKey ? await apolloSearch(cfg.apolloKey, criteria) : await brain.prospect(criteria);
-  return ensureReachable(raw);
+  return verifyProspects(raw, brain);
 }
 
 /**
- * A prospect is only useful if Big Dog can actually email it. Keep those with an
- * email; for the rest, derive a likely address from a full name + company domain;
- * drop anyone with no email and no way to infer one (they can't be campaigned).
+ * Verify each prospect up front so only contactable leads are shown. For a
+ * person + domain, learn the company's email pattern and SMTP-verify the address;
+ * for a provided (often role) address, confirm the domain can receive mail. Drop
+ * anyone we can't confirm a deliverable address for — they can't be campaigned.
  */
-function ensureReachable(list: Prospect[]): Prospect[] {
+async function verifyProspects(list: Prospect[], brain: BigDogBrain): Promise<Prospect[]> {
   const out: Prospect[] = [];
-  for (const p of list) {
-    if (p.email && p.email.includes('@')) { out.push(p); continue; }
-    const domain = p.domain ? domainFromUrl(p.domain) ?? p.domain : '';
-    const parts = (p.name || '').trim().split(/\s+/).filter(Boolean);
-    if (domain && parts.length >= 2) {
-      const g = guessEmail(parts[0]!, parts.slice(1).join(' '), domain);
-      if (g.email) {
-        out.push({ ...p, email: g.email, notes: `${p.notes ? p.notes + ' · ' : ''}email: ${g.confidence} guess (verify before send)` });
-        continue;
-      }
-    }
-    // No email and nothing to infer from → skip (can't be added to a campaign).
+  // Cap concurrency — each lead does pattern-learning + an SMTP probe.
+  const CHUNK = 4;
+  for (let i = 0; i < list.length; i += CHUNK) {
+    const batch = await Promise.all(list.slice(i, i + CHUNK).map((p) => verifyOne(p, brain).catch(() => null)));
+    for (const r of batch) if (r) out.push(r);
   }
   return out;
+}
+
+async function verifyOne(p: Prospect, brain: BigDogBrain): Promise<Prospect | null> {
+  const domain = p.domain ? domainFromUrl(p.domain) ?? p.domain : (p.email && p.email.includes('@') ? p.email.split('@')[1]! : '');
+  if (!domain) return null;
+  const parts = (p.name || '').trim().split(/\s+/).filter(Boolean);
+
+  // Prefer a confirmed personal address (learned pattern + SMTP verify).
+  if (parts.length >= 2) {
+    const r = await findContactEmail({ name: p.name, domain }, brain, { verify: true }).catch(() => null);
+    if (r && r.email && (r.confidence === 'verified' || r.confidence === 'guess')) {
+      const mark = r.confidence === 'verified' ? '✓ verified' : '✓ deliverable (pattern)';
+      return { ...p, email: r.email, notes: `${p.notes ? p.notes + ' · ' : ''}${mark} — ${r.method}` };
+    }
+  }
+  // Otherwise accept a provided (role/company) address if the domain accepts mail.
+  if (p.email && p.email.includes('@')) {
+    const host = await mxHost(p.email.split('@')[1]!).catch(() => null);
+    if (host) return { ...p, notes: `${p.notes ? p.notes + ' · ' : ''}✓ company address — domain accepts mail` };
+  }
+  return null; // couldn't confirm a deliverable address → drop
 }
 
 export function activeProvider(cfg: AppConfig): { name: string; ready: boolean } {
