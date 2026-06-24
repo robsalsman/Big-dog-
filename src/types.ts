@@ -108,6 +108,7 @@ export interface Sequence {
   name: string;
   steps: SequenceStep[];
   active: boolean;
+  autoSend?: boolean; // send touches autonomously (vs queue as drafts)
   createdAt: string;
 }
 export interface Enrollment {

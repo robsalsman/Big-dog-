@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { messages, deals, events, drafts, memories, activity, suppressed, contacts, sequences, enrollments } from './db.js';
 import { createSequence, enrollContacts, runDueEnrollments, DEFAULT_SEQUENCE_STEPS } from './sequences.js';
+import { runAutopilot } from './autopilot.js';
 import { logActivity } from './activity.js';
 import { runAgent } from './agent/agent.js';
 import { runCadenceSweep } from './cadence.js';
@@ -329,6 +330,18 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       recordSentMessage({ accountId: account!.id, fromName: account!.label, fromEmail: account!.email, toEmails: to, subject, body });
       logActivity('send', `Sent email to ${to}: "${subject}"`);
       res.json({ ok: true, sent: true });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Autopilot: one command runs the whole top-of-funnel ─────────────
+  app.post('/api/autopilot', async (req, res) => {
+    const goal = String(req.body?.goal ?? '').trim();
+    if (!goal) return res.status(400).json({ error: 'tell Big Dog the goal, e.g. "10 meetings with security guard company owners"' });
+    try {
+      const result = await runAutopilot(goal, { fullyAutomate: !!req.body?.fullyAutomate, accountId: req.body?.accountId }, brain, cfg);
+      res.json(result);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }

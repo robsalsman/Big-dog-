@@ -149,6 +149,7 @@ db.exec(`
     name TEXT,
     steps TEXT,
     active INTEGER DEFAULT 1,
+    autoSend INTEGER DEFAULT 0,
     createdAt TEXT
   );
 
@@ -188,6 +189,15 @@ db.exec(`
 {
   const cols = db.prepare('PRAGMA table_info(drafts)').all() as { name: string }[];
   if (!cols.some((c) => c.name === 'ccEmails')) db.exec('ALTER TABLE drafts ADD COLUMN ccEmails TEXT');
+}
+
+// Migration: add sequences.autoSend.
+{
+  const t = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sequences'").get();
+  if (t) {
+    const cols = db.prepare('PRAGMA table_info(sequences)').all() as { name: string }[];
+    if (!cols.some((c) => c.name === 'autoSend')) db.exec('ALTER TABLE sequences ADD COLUMN autoSend INTEGER DEFAULT 0');
+  }
 }
 
 // ── Messages ────────────────────────────────────────────────────────────
@@ -428,16 +438,16 @@ export const contacts = {
 export const sequences = {
   all(): Sequence[] {
     return (db.prepare('SELECT * FROM sequences ORDER BY createdAt DESC').all() as any[]).map((r) => ({
-      id: r.id, name: r.name, steps: JSON.parse(r.steps || '[]'), active: !!r.active, createdAt: r.createdAt,
+      id: r.id, name: r.name, steps: JSON.parse(r.steps || '[]'), active: !!r.active, autoSend: !!r.autoSend, createdAt: r.createdAt,
     }));
   },
   get(id: string): Sequence | undefined {
     const r = db.prepare('SELECT * FROM sequences WHERE id = ?').get(id) as any;
-    return r ? { id: r.id, name: r.name, steps: JSON.parse(r.steps || '[]'), active: !!r.active, createdAt: r.createdAt } : undefined;
+    return r ? { id: r.id, name: r.name, steps: JSON.parse(r.steps || '[]'), active: !!r.active, autoSend: !!r.autoSend, createdAt: r.createdAt } : undefined;
   },
   upsert(s: Sequence) {
-    db.prepare('INSERT INTO sequences (id, name, steps, active, createdAt) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, steps=excluded.steps, active=excluded.active')
-      .run(s.id, s.name, JSON.stringify(s.steps), s.active ? 1 : 0, s.createdAt);
+    db.prepare('INSERT INTO sequences (id, name, steps, active, autoSend, createdAt) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, steps=excluded.steps, active=excluded.active, autoSend=excluded.autoSend')
+      .run(s.id, s.name, JSON.stringify(s.steps), s.active ? 1 : 0, s.autoSend ? 1 : 0, s.createdAt);
   },
   delete(id: string) {
     db.prepare('DELETE FROM sequences WHERE id = ?').run(id);

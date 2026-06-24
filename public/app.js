@@ -809,6 +809,20 @@ function renderProspect() {
   el.dataset.init = '1';
   const prov = state.prospect || { name: 'web', ready: true };
   el.innerHTML = `
+    <div class="card" style="border:1px solid var(--accent);margin-bottom:18px">
+      <strong>🚀 Autopilot — tell Big Dog the outcome you want</strong>
+      <div class="muted small" style="margin:4px 0 8px">
+        One command runs the whole funnel: source leads → research each → personalized outreach + follow-ups, all in your voice.
+        e.g. <em>"Book me 10 meetings next week with security guard company owners"</em>
+      </div>
+      <textarea class="edit" id="ap-goal" placeholder="What do you want Big Dog to make happen?" style="min-height:54px;width:100%"></textarea>
+      <div class="actions" style="align-items:center;flex-wrap:wrap">
+        <label class="small muted"><input type="checkbox" id="ap-auto" /> Fully automate (send outreach without approval — meetings still wait for your OK)</label>
+        <button class="btn small primary" onclick="launchAutopilot()">🚀 Launch autopilot</button>
+        <span id="ap-status" class="muted small"></span>
+      </div>
+      <div id="ap-out" style="margin-top:10px"></div>
+    </div>
     <div class="row" style="margin-bottom:6px">
       <h2>Prospect — find new leads</h2>
       <span class="pill">${prov.name === 'apollo' ? 'Apollo.io' : 'web research'}</span>
@@ -871,6 +885,7 @@ function renderProspect() {
       <div id="camp-out" style="margin-top:12px"></div>
     </div>`;
   $('#prospect-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') findLeads(); });
+  $('#ap-goal') && $('#ap-goal').focus && null;
   $('#csv-file').addEventListener('change', (e) => {
     const f = e.target.files[0]; if (!f) return;
     const r = new FileReader(); r.onload = () => { $('#csv-text').value = r.result; }; r.readAsText(f);
@@ -944,6 +959,33 @@ window.downloadCsv = () => {
   const blob = new Blob([header + '\n' + body], { type: 'text/csv' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = 'big-dog-enriched.csv'; a.click();
+};
+
+window.launchAutopilot = async () => {
+  const goal = $('#ap-goal').value.trim();
+  if (!goal) { $('#ap-status').textContent = 'Tell Big Dog the goal first.'; return; }
+  const fullyAutomate = $('#ap-auto').checked;
+  $('#ap-status').textContent = '';
+  $('#ap-out').innerHTML = '<div class="muted">🚀 Autopilot working — sourcing leads, researching, building outreach… (can take 1–2 min)</div>';
+  try {
+    const r = await api('/api/autopilot', { method: 'POST', body: { goal, fullyAutomate } });
+    $('#ap-out').innerHTML = `
+      <div class="card" style="background:var(--bg)">
+        <strong>🚀 Autopilot is running: ${esc(r.sequenceName)}</strong>
+        <div class="small" style="margin-top:6px">
+          Target: <strong>${r.targetMeetings}</strong> meetings · Sourced <strong>${r.found}</strong> leads ·
+          <strong>${r.withEmail}</strong> with email · Researched <strong>${r.researched}</strong> ·
+          Enrolled <strong>${r.enrolled}</strong> · First touches: <strong>${r.firstTouches}</strong> ·
+          Mode: <strong>${r.mode === 'fully-automate' ? 'fully automated' : 'draft & approve'}</strong>
+        </div>
+        ${r.notes.map((n) => `<div class="muted small" style="margin-top:4px">• ${esc(n)}</div>`).join('')}
+        <div class="actions" style="margin-top:8px">
+          <button class="btn small" onclick="switchTab('campaigns')">View campaign</button>
+          <button class="btn small" onclick="switchTab('drafts')">See drafts</button>
+        </div>
+      </div>`;
+    await load();
+  } catch (e) { $('#ap-out').innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
 };
 
 window.findLeads = async () => {

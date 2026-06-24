@@ -27,8 +27,8 @@ export const DEFAULT_SEQUENCE_STEPS = [
   { dayOffset: 14, subject: 'Closing the loop', instruction: 'Polite break-up email. Acknowledge timing may be off, leave the door open, make it easy to say "not now". Friendly, no guilt.' },
 ];
 
-export function createSequence(name: string, steps = DEFAULT_SEQUENCE_STEPS): Sequence {
-  const seq: Sequence = { id: randomUUID().slice(0, 12), name: name || 'New sequence', steps, active: true, createdAt: new Date().toISOString() };
+export function createSequence(name: string, steps = DEFAULT_SEQUENCE_STEPS, autoSend = false): Sequence {
+  const seq: Sequence = { id: randomUUID().slice(0, 12), name: name || 'New sequence', steps, active: true, autoSend, createdAt: new Date().toISOString() };
   sequences.upsert(seq);
   return seq;
 }
@@ -115,7 +115,7 @@ export async function runDueEnrollments(brain: BigDogBrain, cfg: AppConfig): Pro
       const composed = await brain.composeEmail({ to: e.email, subject: step.subject, instruction: `${step.instruction}\n\n${context}`, memory });
       const account = getAccount(e.accountId);
 
-      if (cfg.sendMode === 'auto' && account) {
+      if ((seq.autoSend || cfg.sendMode === 'auto') && account) {
         await sendMail(account, { to: e.email, subject: composed.subject, body: composed.body });
         recordSentMessage({ accountId: account.id, fromName: account.label, fromEmail: account.email, toEmails: e.email, subject: composed.subject, body: composed.body });
         logActivity('sequence', `Sent "${seq.name}" touch ${e.step + 1} to ${e.email}`);
