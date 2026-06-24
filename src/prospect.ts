@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { deals, memories, contacts } from './db.js';
 import { findEmail, guessEmail, mxHost, type EmailResult } from './emailfinder.js';
+import { verifierConfigured, verifyAddress } from './emailverify.js';
 import { learnDomainPattern } from './patternlearner.js';
 import type { AppConfig } from './config.js';
 import type { BigDogBrain } from './brain.js';
@@ -39,6 +40,22 @@ export async function findContactEmail(
     opts.verify === false
       ? guessEmail(first, last, domain, learned?.patternKey)
       : await findEmail({ firstName: first, lastName: last, domain, learnedKey: learned?.patternKey });
+
+  // Hard verification via an external API (works even when SMTP/port-25 is
+  // blocked). Upgrades to "verified", corrects to a valid sibling candidate, or
+  // marks invalid — used everywhere email finding happens.
+  if (verifierConfigured() && result.email) {
+    const candidates = [result.email, ...(result.candidates ?? []).filter((c) => c !== result.email)].slice(0, 5);
+    let marked = false;
+    for (const cand of candidates) {
+      const v = await verifyAddress(cand).catch(() => null);
+      if (!v) continue;
+      if (v.status === 'valid') { result.email = cand; result.confidence = 'verified'; result.method = `API-verified (${v.provider})`; marked = true; break; }
+      if (v.status === 'catch-all' && !marked) { result.confidence = 'guess'; result.method = `catch-all domain (${v.provider})`; marked = true; }
+      // 'invalid' on the primary → keep trying siblings; 'unknown' → leave as-is.
+      if (cand === result.email && v.status === 'invalid' && result.confidence !== 'verified') { result.confidence = 'unverified'; result.method = `API: address not deliverable (${v.provider})`; }
+    }
+  }
   return { ...result, learnedSource: learned?.source };
 }
 
@@ -241,17 +258,27 @@ async function verifyOne(p: Prospect, brain: BigDogBrain): Promise<Prospect | nu
   const domain = p.domain ? domainFromUrl(p.domain) ?? p.domain : (p.email && p.email.includes('@') ? p.email.split('@')[1]! : '');
   if (!domain) return null;
   const parts = (p.name || '').trim().split(/\s+/).filter(Boolean);
+  const useApi = verifierConfigured(); // HTTPS verifier works even with port 25 blocked
 
-  // Prefer a confirmed personal address (learned pattern + SMTP verify).
+  // Prefer a confirmed personal address. With an API verifier, skip the (blocked)
+  // SMTP probe and let the API confirm; otherwise fall back to the SMTP probe.
   if (parts.length >= 2) {
-    const r = await findContactEmail({ name: p.name, domain }, brain, { verify: true }).catch(() => null);
+    const r = await findContactEmail({ name: p.name, domain }, brain, { verify: !useApi }).catch(() => null);
     if (r && r.email && (r.confidence === 'verified' || r.confidence === 'guess')) {
       const mark = r.confidence === 'verified' ? '✓ verified' : '✓ deliverable (pattern)';
       return { ...p, email: r.email, notes: `${p.notes ? p.notes + ' · ' : ''}${mark} — ${r.method}` };
     }
   }
-  // Otherwise accept a provided (role/company) address if the domain accepts mail.
+
+  // Otherwise judge a provided (role/company) address.
   if (p.email && p.email.includes('@')) {
+    if (useApi) {
+      const v = await verifyAddress(p.email).catch(() => null);
+      if (v?.status === 'valid') return { ...p, notes: `${p.notes ? p.notes + ' · ' : ''}✓ verified (${v.provider})` };
+      if (v?.status === 'catch-all') return { ...p, notes: `${p.notes ? p.notes + ' · ' : ''}✓ deliverable — catch-all (${v.provider})` };
+      if (v?.status === 'invalid') return null;
+      // 'unknown' → fall through to the MX check below
+    }
     const host = await mxHost(p.email.split('@')[1]!).catch(() => null);
     if (host) return { ...p, notes: `${p.notes ? p.notes + ' · ' : ''}✓ company address — domain accepts mail` };
   }

@@ -1337,6 +1337,22 @@ async function renderSettings() {
     </div>
 
     <div class="card" style="margin-top:22px">
+      <strong>✅ Email verification</strong> <span id="verify-state" class="tag">checking…</span>
+      <div class="muted small" style="margin:4px 0 8px">
+        Optional but recommended: bring an email-verification API key so prospect emails get <strong>hard-verified over HTTPS</strong>
+        (works even though your VPS blocks SMTP/port 25). Most have free tiers.
+      </div>
+      <select id="verify-provider" class="subj" style="width:100%"></select>
+      <input class="subj" id="verify-apiKey" type="password" placeholder="API key" style="width:100%" />
+      <input class="subj" id="verify-customUrl" placeholder="Custom endpoint URL with {email} and {key} (only for Custom)" style="width:100%" />
+      <div class="actions">
+        <button class="btn primary" onclick="saveVerify()">💾 Save</button>
+        <button class="btn" onclick="testVerifyBtn()">Test</button>
+        <span id="verify-status" class="muted small"></span>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:22px">
       <strong>🔒 Security</strong>
       <div class="muted small" id="auth-state" style="margin:4px 0 8px">Checking…</div>
       <input class="subj" id="pw-current" type="password" placeholder="Current password (only when changing)" />
@@ -1400,6 +1416,7 @@ async function renderSettings() {
   loadZoom();
   loadTwilio();
   loadVoice();
+  loadVerify();
 }
 
 async function loadProfile() {
@@ -1676,6 +1693,31 @@ window.previewVoice = async () => {
     $('#voice-status').textContent = '🔊 Playing preview.';
   } catch (e) { $('#voice-status').textContent = 'Error: ' + e.message; }
 };
+async function loadVerify() {
+  try {
+    const v = await api('/api/verify');
+    const tag = $('#verify-state'); if (tag) { tag.textContent = v.configured ? 'on' : 'off'; tag.className = 'tag ' + (v.configured ? 'warm' : ''); }
+    const sel = $('#verify-provider');
+    if (sel) { sel.innerHTML = '<option value="off">Off (SMTP / pattern only)</option>' + (v.providers || []).map((p) => `<option value="${p.id}">${esc(p.label)}</option>`).join(''); sel.value = v.provider || 'off'; }
+    if ($('#verify-customUrl')) $('#verify-customUrl').value = v.customUrl || '';
+  } catch { /* not authed */ }
+}
+window.saveVerify = async () => {
+  $('#verify-status').textContent = 'Saving…';
+  try {
+    await api('/api/verify', { method: 'POST', body: { provider: $('#verify-provider').value, apiKey: $('#verify-apiKey').value, customUrl: $('#verify-customUrl').value.trim() } });
+    const t = await api('/api/verify/test', { method: 'POST' });
+    await loadVerify();
+    $('#verify-status').textContent = (t.ok ? '✅ ' : '⚠ ') + t.detail;
+    toast(t.ok ? 'Verifier connected. 🐕' : 'Saved — ' + t.detail);
+  } catch (e) { $('#verify-status').textContent = 'Error: ' + e.message; }
+};
+window.testVerifyBtn = async () => {
+  $('#verify-status').textContent = 'Testing…';
+  try { const t = await api('/api/verify/test', { method: 'POST' }); $('#verify-status').textContent = (t.ok ? '✅ ' : '❌ ') + t.detail; }
+  catch (e) { $('#verify-status').textContent = 'Error: ' + e.message; }
+};
+
 window.uploadVoiceSample = async () => {
   const f = $('#voice-sample').files[0];
   if (!f) { $('#voice-sample-status').textContent = 'Pick an audio file first.'; return; }

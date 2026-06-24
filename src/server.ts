@@ -33,6 +33,7 @@ import { twilioConfigured, saveTwilioCreds, publicTwilio, testTwilio, sendSms, m
 import { bookFromMessage } from './booking.js';
 import { handleOwnerSms } from './smscommands.js';
 import { voiceConfigured, loadVoiceSettings, saveVoiceSettings, publicVoice, testVoice, synthesize, saveVoiceSample, voiceFilePath } from './voice.js';
+import { verifierConfigured, saveVerifySettings, publicVerify, testVerifier } from './emailverify.js';
 import { browserConfigured, browserReady } from './browser.js';
 import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
@@ -152,6 +153,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       zoom: { configured: zoomConfigured() },
       twilio: { configured: twilioConfigured() },
       voice: { configured: voiceConfigured() },
+      verify: { configured: verifierConfigured() },
       browser: { configured: browserConfigured(), ready: browserReady() },
       prospect: activeProvider(cfg),
       messages: messages.recent(100),
@@ -573,6 +575,11 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       res.json({ ok: true, sid: r.sid, voice: !!playUrl });
     } catch (err) { res.status(500).json({ error: (err as Error).message }); }
   });
+
+  // ── Email verification API (hard verify even with port 25 blocked) ──
+  app.get('/api/verify', (_req, res) => res.json(publicVerify()));
+  app.post('/api/verify', (req, res) => { saveVerifySettings(req.body ?? {}); res.json(publicVerify()); });
+  app.post('/api/verify/test', async (_req, res) => res.json(await testVerifier()));
 
   // ── Voice (TTS for calls/voicemails) ────────────────────────────────
   app.get('/api/voice', (_req, res) => res.json(publicVoice()));
