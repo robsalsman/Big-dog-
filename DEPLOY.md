@@ -121,6 +121,28 @@ user gets a fully private inbox, contacts, deals, and settings.
 
 ## Updating
 
+### Hands-off auto-update (recommended)
+
+Install once and Big Dog keeps **itself** current — it checks for new releases
+every 15 minutes and, when there's a change, pulls the code, rebuilds, and
+restarts. A failed build is ignored (the running version stays up), so a bad
+push can't take you down. It also enables unattended OS security updates.
+
+```bash
+sudo bash deploy/install-autoupdate.sh
+```
+
+Check on it anytime:
+
+```bash
+systemctl list-timers bigdog-update.timer   # when it next runs
+tail -f /var/log/bigdog-update.log          # what it's done
+```
+
+To pause auto-updates: `sudo systemctl disable --now bigdog-update.timer`.
+
+### Manual update
+
 ```bash
 git pull
 docker compose up -d --build
