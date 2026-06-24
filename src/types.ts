@@ -87,6 +87,7 @@ export interface Draft {
   inReplyTo: string | null; // message id
   dealId: string | null;
   toEmails: string;
+  ccEmails?: string | null; // comma-separated CC recipients
   subject: string;
   body: string;
   rationale: string;
@@ -94,6 +95,19 @@ export interface Draft {
   createdAt: string;
   sentAt: string | null;
   sendAt?: string | null; // schedule a send for later
+}
+
+export interface Contact {
+  email: string;
+  name: string;
+  company: string;
+  title: string;
+  phone: string;
+  notes: string;
+  tags: string;
+  firstSeen: string;
+  lastSeen: string;
+  updatedAt: string;
 }
 
 export interface Digest {

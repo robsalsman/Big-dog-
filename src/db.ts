@@ -11,6 +11,7 @@ import type {
   Digest,
   DealStage,
   Account,
+  Contact,
 } from './types.js';
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
@@ -128,6 +129,19 @@ db.exec(`
     ts TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS contacts (
+    email TEXT PRIMARY KEY,
+    name TEXT,
+    company TEXT,
+    title TEXT,
+    phone TEXT,
+    notes TEXT,
+    tags TEXT,
+    firstSeen TEXT,
+    lastSeen TEXT,
+    updatedAt TEXT
+  );
+
   CREATE INDEX IF NOT EXISTS idx_messages_date ON messages(date DESC);
   CREATE INDEX IF NOT EXISTS idx_messages_deal ON messages(dealId);
   CREATE INDEX IF NOT EXISTS idx_events_start ON events(start);
@@ -143,6 +157,12 @@ db.exec(`
 {
   const cols = db.prepare('PRAGMA table_info(messages)').all() as { name: string }[];
   if (!cols.some((c) => c.name === 'archived')) db.exec('ALTER TABLE messages ADD COLUMN archived INTEGER DEFAULT 0');
+}
+
+// Migration: add drafts.ccEmails for CC / reply-all.
+{
+  const cols = db.prepare('PRAGMA table_info(drafts)').all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'ccEmails')) db.exec('ALTER TABLE drafts ADD COLUMN ccEmails TEXT');
 }
 
 // ── Messages ────────────────────────────────────────────────────────────
@@ -166,6 +186,10 @@ export const messages = {
     // The main feed is received mail; sent mail still appears inside threads,
     // and dismissed (archived) messages are hidden.
     return db.prepare("SELECT * FROM messages WHERE (folder IS NULL OR folder != 'SENT') AND (archived IS NULL OR archived = 0) ORDER BY date DESC LIMIT ?").all(limit) as Message[];
+  },
+  forContact(email: string, limit = 100): Message[] {
+    const e = (email || '').toLowerCase().trim();
+    return db.prepare('SELECT * FROM messages WHERE lower(fromEmail) = ? OR lower(toEmails) LIKE ? ORDER BY date DESC LIMIT ?').all(e, `%${e}%`, limit) as Message[];
   },
   archive(id: string) {
     db.prepare('UPDATE messages SET archived = 1 WHERE id = ?').run(id);
@@ -277,9 +301,9 @@ export const events = {
 export const drafts = {
   insert(d: Draft) {
     db.prepare(
-      `INSERT INTO drafts (id, accountId, inReplyTo, dealId, toEmails, subject, body, rationale, status, createdAt, sentAt, sendAt)
-       VALUES (@id, @accountId, @inReplyTo, @dealId, @toEmails, @subject, @body, @rationale, @status, @createdAt, @sentAt, @sendAt)`,
-    ).run({ ...d, sendAt: d.sendAt ?? null });
+      `INSERT INTO drafts (id, accountId, inReplyTo, dealId, toEmails, ccEmails, subject, body, rationale, status, createdAt, sentAt, sendAt)
+       VALUES (@id, @accountId, @inReplyTo, @dealId, @toEmails, @ccEmails, @subject, @body, @rationale, @status, @createdAt, @sentAt, @sendAt)`,
+    ).run({ ...d, ccEmails: d.ccEmails ?? null, sendAt: d.sendAt ?? null });
   },
   setSendAt(id: string, sendAt: string | null) {
     db.prepare('UPDATE drafts SET sendAt = ? WHERE id = ?').run(sendAt, id);
@@ -333,6 +357,45 @@ export const suppressed = {
   },
   all(): string[] {
     return (db.prepare('SELECT email FROM suppressed ORDER BY ts DESC').all() as { email: string }[]).map((r) => r.email);
+  },
+};
+
+// ── Contacts (CRM) ───────────────────────────────────────────────────────
+export const contacts = {
+  /** Note that we've seen this address (mail in/out). Fills name if we don't have one. */
+  seen(email: string, name = '', whenIso?: string) {
+    const e = (email || '').toLowerCase().trim();
+    if (!e || !e.includes('@')) return;
+    const when = whenIso || new Date().toISOString();
+    const existing = db.prepare('SELECT email, name FROM contacts WHERE email = ?').get(e) as { email: string; name: string } | undefined;
+    if (existing) {
+      db.prepare('UPDATE contacts SET name = CASE WHEN (name IS NULL OR name = \'\') AND ? <> \'\' THEN ? ELSE name END, lastSeen = ? WHERE email = ?')
+        .run(name, name, when, e);
+    } else {
+      db.prepare('INSERT INTO contacts (email, name, company, title, phone, notes, tags, firstSeen, lastSeen, updatedAt) VALUES (?, ?, \'\', \'\', \'\', \'\', \'\', ?, ?, ?)')
+        .run(e, name, when, when, when);
+    }
+  },
+  get(email: string): Contact | undefined {
+    return db.prepare('SELECT * FROM contacts WHERE email = ?').get((email || '').toLowerCase().trim()) as Contact | undefined;
+  },
+  save(c: Partial<Contact> & { email: string }) {
+    const e = c.email.toLowerCase().trim();
+    const cur = this.get(e) ?? { email: e, name: '', company: '', title: '', phone: '', notes: '', tags: '', firstSeen: new Date().toISOString(), lastSeen: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    const merged = { ...cur, ...c, email: e, updatedAt: new Date().toISOString() };
+    db.prepare(
+      `INSERT INTO contacts (email, name, company, title, phone, notes, tags, firstSeen, lastSeen, updatedAt)
+       VALUES (@email, @name, @company, @title, @phone, @notes, @tags, @firstSeen, @lastSeen, @updatedAt)
+       ON CONFLICT(email) DO UPDATE SET name=@name, company=@company, title=@title, phone=@phone, notes=@notes, tags=@tags, lastSeen=@lastSeen, updatedAt=@updatedAt`,
+    ).run(merged);
+    return merged as Contact;
+  },
+  all(limit = 1000): Contact[] {
+    return db.prepare('SELECT * FROM contacts ORDER BY lastSeen DESC LIMIT ?').all(limit) as Contact[];
+  },
+  suggest(q: string, limit = 8): Contact[] {
+    const like = `%${q}%`;
+    return db.prepare('SELECT * FROM contacts WHERE email LIKE ? OR name LIKE ? OR company LIKE ? ORDER BY lastSeen DESC LIMIT ?').all(like, like, like, limit) as Contact[];
   },
 };
 

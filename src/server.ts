@@ -2,7 +2,7 @@ import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { messages, deals, events, drafts, memories, activity, suppressed } from './db.js';
+import { messages, deals, events, drafts, memories, activity, suppressed, contacts } from './db.js';
 import { logActivity } from './activity.js';
 import { runAgent } from './agent/agent.js';
 import { runCadenceSweep } from './cadence.js';
@@ -156,6 +156,16 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const deal = m.dealId ? deals.get(m.dealId) ?? null : null;
     const memory = m.fromEmail ? memories.recall(m.fromEmail) : '';
     const thread = messages.thread(m.threadId);
+    // Reply-all: CC everyone else on the original (minus us and the sender).
+    let cc: string | null = null;
+    if (req.body?.replyAll) {
+      const mine = new Set(allAccounts().map((a) => a.email.toLowerCase()));
+      mine.add(m.fromEmail.toLowerCase());
+      const others = (m.toEmails || '')
+        .split(/[,;]/).map((s) => (s.match(/[^<>\s]+@[^<>\s]+/)?.[0] || '').toLowerCase().trim())
+        .filter((e) => e && e.includes('@') && !mine.has(e));
+      cc = [...new Set(others)].join(', ') || null;
+    }
     try {
       const { subject, body, rationale } = await brain.draftReply(m, deal, memory, thread);
       const draft: Draft = {
@@ -164,6 +174,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
         inReplyTo: m.messageId,
         dealId: m.dealId,
         toEmails: m.fromEmail,
+        ccEmails: cc,
         subject,
         body,
         rationale,
@@ -177,7 +188,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       if (cfg.sendMode === 'auto') {
         const account = accountById(m.accountId);
         if (account) {
-          await sendMail(account, { to: draft.toEmails, subject, body, inReplyTo: m.messageId });
+          await sendMail(account, { to: draft.toEmails, cc, subject, body, inReplyTo: m.messageId });
           drafts.setStatus(draft.id, 'sent', new Date().toISOString());
           recordSentMessage({ accountId: account.id, fromName: account.label, fromEmail: account.email, toEmails: draft.toEmails, subject, body });
         }
@@ -221,6 +232,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const account = accountById(draft.accountId);
     const body = (req.body?.body as string) ?? draft.body;
     const subject = (req.body?.subject as string) ?? draft.subject;
+    const cc = (req.body?.cc as string) ?? draft.ccEmails ?? null;
     if (!account) {
       drafts.setStatus(draft.id, 'sent', new Date().toISOString());
       const from = allAccounts()[0];
@@ -229,7 +241,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       return res.json({ ok: true, note: 'No live account for this draft (demo) — marked as sent.' });
     }
     try {
-      await sendMail(account, { to: draft.toEmails, subject, body, inReplyTo: draft.inReplyTo });
+      await sendMail(account, { to: draft.toEmails, cc, subject, body, inReplyTo: draft.inReplyTo });
       drafts.setStatus(draft.id, 'sent', new Date().toISOString());
       recordSentMessage({ accountId: account.id, fromName: account.label, fromEmail: account.email, toEmails: draft.toEmails, subject, body });
       logActivity('send', `Sent email to ${draft.toEmails}: "${subject}"`);
@@ -296,6 +308,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   // Send (or queue) a composed email that isn't a reply.
   app.post('/api/compose/send', async (req, res) => {
     const to = String(req.body?.to ?? '').trim();
+    const cc = String(req.body?.cc ?? '').trim() || null;
     const subject = String(req.body?.subject ?? '(no subject)');
     const body = String(req.body?.body ?? '');
     if (!to.includes('@') || !body.trim()) return res.status(400).json({ error: 'need a recipient and a body' });
@@ -305,19 +318,42 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     if (queue) {
       const draft: Draft = {
         id: randomUUID().slice(0, 16), accountId: accountId || 'demo', inReplyTo: null, dealId: null,
-        toEmails: to, subject, body, rationale: 'Composed by you.', status: 'pending', createdAt: new Date().toISOString(), sentAt: null,
+        toEmails: to, ccEmails: cc, subject, body, rationale: 'Composed by you.', status: 'pending', createdAt: new Date().toISOString(), sentAt: null,
       };
       drafts.insert(draft);
       return res.json({ ok: true, queued: true, draftId: draft.id });
     }
     try {
-      await sendMail(account!, { to, subject, body });
+      await sendMail(account!, { to, cc, subject, body });
       recordSentMessage({ accountId: account!.id, fromName: account!.label, fromEmail: account!.email, toEmails: to, subject, body });
       logActivity('send', `Sent email to ${to}: "${subject}"`);
       res.json({ ok: true, sent: true });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // ── Contacts (CRM) ──────────────────────────────────────────────────
+  app.get('/api/contacts', (_req, res) => res.json({ contacts: contacts.all() }));
+  app.get('/api/contacts/suggest', (req, res) => {
+    const q = String(req.query.q ?? '').trim();
+    res.json({ contacts: q ? contacts.suggest(q) : contacts.all(20) });
+  });
+  app.post('/api/contacts', (req, res) => {
+    const email = String(req.body?.email ?? '').trim().toLowerCase();
+    if (!email.includes('@')) return res.status(400).json({ error: 'need a valid email' });
+    res.json({ contact: contacts.save({ email, name: req.body?.name, company: req.body?.company, title: req.body?.title, phone: req.body?.phone, notes: req.body?.notes, tags: req.body?.tags }) });
+  });
+  // Full contact card: profile + every interaction Big Dog has on file.
+  app.get('/api/contacts/:email', (req, res) => {
+    const email = decodeURIComponent(req.params.email).toLowerCase();
+    const contact = contacts.get(email) ?? { email, name: '', company: '', title: '', phone: '', notes: '', tags: '', firstSeen: '', lastSeen: '', updatedAt: '' };
+    const msgs = messages.forContact(email, 100);
+    const deal = deals.findByContact(email) ?? null;
+    const allDeals = deals.all().filter((d) => (d.contactEmail || '').toLowerCase() === email);
+    const evts = events.all().filter((e) => (e.attendees || '').toLowerCase().includes(email));
+    const pendingDrafts = drafts.pending().filter((d) => (d.toEmails + ',' + (d.ccEmails || '')).toLowerCase().includes(email));
+    res.json({ contact, deal, deals: allDeals, messages: msgs, events: evts, drafts: pendingDrafts, memory: memories.recall(email) });
   });
 
   // Create a meeting invite: calendar event + a (queued) invite email.

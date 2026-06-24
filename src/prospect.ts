@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { deals, memories } from './db.js';
+import { deals, memories, contacts } from './db.js';
 import { findEmail, guessEmail, type EmailResult } from './emailfinder.js';
 import { learnDomainPattern } from './patternlearner.js';
 import type { AppConfig } from './config.js';
@@ -250,6 +250,7 @@ export function saveProspectAsDeal(p: Prospect): Deal {
   deals.upsert(deal);
   if (p.email) {
     memories.add(p.email, `Sourced via ${p.source} prospecting: ${p.title} at ${p.company}. ${p.notes}`.trim());
+    contacts.save({ email: p.email, name: p.name, company: p.company, title: p.title });
   }
   return deal;
 }

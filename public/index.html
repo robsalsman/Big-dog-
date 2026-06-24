@@ -34,6 +34,7 @@
       <button class="tab" data-tab="prospect">Prospect</button>
       <button class="tab" data-tab="drafts">Drafts <span id="drafts-count" class="badge"></span></button>
       <button class="tab" data-tab="sent">Sent</button>
+      <button class="tab" data-tab="contacts">Contacts</button>
       <button class="tab" data-tab="digest">Morning brief</button>
       <button class="tab" data-tab="chat">Ask Big Dog</button>
       <button class="tab" data-tab="activity">Activity</button>
@@ -47,6 +48,7 @@
       <section id="prospect" class="panel"></section>
       <section id="drafts" class="panel"></section>
       <section id="sent" class="panel"></section>
+      <section id="contacts" class="panel"></section>
       <section id="digest" class="panel"></section>
       <section id="chat" class="panel"></section>
       <section id="activity" class="panel"></section>
@@ -72,7 +74,9 @@
           <h2 id="compose-title" style="margin:0">✏️ New email</h2>
           <button class="btn ghost" onclick="closeCompose()">✕</button>
         </div>
-        <input id="cmp-to" class="subj" placeholder="To (email address)" style="width:100%;margin-top:10px" />
+        <input id="cmp-to" class="subj" list="contacts-dl" placeholder="To (comma-separate for multiple)" style="width:100%;margin-top:10px" />
+        <input id="cmp-cc" class="subj" list="contacts-dl" placeholder="Cc (optional, comma-separated)" style="width:100%" />
+        <datalist id="contacts-dl"></datalist>
         <input id="cmp-subject" class="subj" placeholder="Subject" style="width:100%" />
         <textarea id="cmp-body" class="edit" style="width:100%;min-height:160px" placeholder="Write your message — or describe it below and hit ✨ AI help"></textarea>
         <input id="cmp-instruction" class="subj" placeholder="✨ Tell Big Dog what to say, then click AI help…" style="width:100%" />

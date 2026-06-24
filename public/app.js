@@ -128,6 +128,7 @@ function messageCard(m) {
         <button class="btn small ghost" onclick="toggleBody('${m.id}')">Read</button>
         <button class="btn small" onclick="viewThread('${m.threadId}','${m.id}')">🧵 Thread</button>
         <button class="btn small primary" onclick="draftReply('${m.id}')">🐕 Draft my reply</button>
+        ${(m.toEmails && m.toEmails.split(/[,;]/).length > 1) ? `<button class="btn small" onclick="draftReply('${m.id}', true)" title="Reply to everyone on the thread">↩↩ Reply all</button>` : ''}
         <button class="btn small" onclick="research('${m.id}','${esc(m.fromName)} ${esc(m.fromEmail)}')">🔎 Research</button>
         <button class="btn small ghost" onclick="remember('${esc(m.fromEmail)}')">📝 Remember</button>
         <button class="btn small ghost" onclick="dismissMessage('${m.id}')" title="Remove this message from the inbox">🗑 Dismiss</button>
@@ -230,11 +231,19 @@ window.suppressSender = async (email) => {
 };
 
 // ── Compose new email / meeting invite ───────────────────────────────────
+async function loadContactsDatalist() {
+  try {
+    const { contacts } = await api('/api/contacts/suggest');
+    const dl = $('#contacts-dl'); if (!dl) return;
+    dl.innerHTML = contacts.map((c) => `<option value="${esc(c.email)}">${esc(c.name || '')}${c.company ? ' · ' + esc(c.company) : ''}</option>`).join('');
+  } catch { /* ignore */ }
+}
 window.openCompose = (to = '') => {
-  $('#cmp-to').value = to; $('#cmp-subject').value = ''; $('#cmp-body').value = '';
+  $('#cmp-to').value = to; $('#cmp-cc').value = ''; $('#cmp-subject').value = ''; $('#cmp-body').value = '';
   $('#cmp-instruction').value = ''; $('#cmp-status').textContent = '';
   $('#cmp-meeting').style.display = 'none';
   $('#compose').style.display = 'flex';
+  loadContactsDatalist();
   setTimeout(() => $('#cmp-to').focus(), 50);
 };
 window.closeCompose = () => { $('#compose').style.display = 'none'; };
@@ -260,7 +269,7 @@ window.composeSend = async (now) => {
   if (!to.includes('@') || !body) { $('#cmp-status').textContent = 'Need a recipient and a message.'; return; }
   $('#cmp-status').textContent = now ? 'Sending…' : 'Queuing…';
   try {
-    const r = await api('/api/compose/send', { method: 'POST', body: { to, subject: $('#cmp-subject').value.trim() || '(no subject)', body, queue: !now } });
+    const r = await api('/api/compose/send', { method: 'POST', body: { to, cc: $('#cmp-cc').value.trim(), subject: $('#cmp-subject').value.trim() || '(no subject)', body, queue: !now } });
     closeCompose(); await load();
     toast(r.sent ? `Sent to ${to}. 🐕` : 'Queued in Drafts for approval. 🐕');
   } catch (e) { $('#cmp-status').textContent = 'Error: ' + e.message; }
@@ -274,6 +283,81 @@ window.sendMeetingInvite = async () => {
     closeCompose(); await load();
     toast('Meeting added to calendar + invite queued in Drafts. 🐕');
   } catch (e) { $('#cmp-status').textContent = 'Error: ' + e.message; }
+};
+
+// ── Contacts (CRM) ───────────────────────────────────────────────────────
+let contactQuery = '';
+async function renderContacts() {
+  const el = $('#contacts');
+  el.innerHTML = `
+    <div class="chat-input" style="margin-bottom:14px">
+      <input id="contact-search" placeholder="🔎 Search contacts…" value="${esc(contactQuery)}" />
+      <button class="btn" onclick="openCompose()">✏️ New email</button>
+    </div>
+    <div id="contact-list"><div class="muted">Loading…</div></div>`;
+  $('#contact-search').addEventListener('input', (e) => { contactQuery = e.target.value; loadContacts(); });
+  loadContacts();
+}
+async function loadContacts() {
+  const wrap = $('#contact-list'); if (!wrap) return;
+  try {
+    const url = contactQuery.trim() ? '/api/contacts/suggest?q=' + encodeURIComponent(contactQuery.trim()) : '/api/contacts';
+    const { contacts } = await api(url);
+    if (!contacts.length) { wrap.innerHTML = '<div class="empty">No contacts yet. They build up automatically as Big Dog syncs your mail.</div>'; return; }
+    wrap.innerHTML = contacts.map((c) => `
+      <div class="card" style="cursor:pointer" onclick="openContact('${esc(c.email)}')">
+        <div class="row">
+          <div><strong>${esc(c.name || c.email)}</strong>
+            ${c.company ? `<span class="muted small">· ${esc(c.company)}</span>` : ''}
+            <div class="muted small">${esc(c.email)}${c.title ? ' · ' + esc(c.title) : ''}</div></div>
+          <div class="muted small" style="white-space:nowrap">${c.lastSeen ? fmtDate(c.lastSeen) : ''}</div>
+        </div>
+      </div>`).join('');
+  } catch (e) { wrap.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+}
+window.openContact = async (email) => {
+  const wrap = $('#contact-list');
+  wrap.innerHTML = '<div class="muted">Loading contact…</div>';
+  try {
+    const d = await api('/api/contacts/' + encodeURIComponent(email));
+    const c = d.contact;
+    const acts = [];
+    for (const m of d.messages) acts.push({ t: m.date, kind: m.folder === 'SENT' ? '↗ You wrote' : '↘ They wrote', text: m.subject });
+    for (const e of d.events) acts.push({ t: e.start, kind: '📅 Meeting', text: e.title });
+    for (const dr of d.drafts) acts.push({ t: dr.createdAt, kind: '✍ Draft pending', text: dr.subject });
+    acts.sort((a, b) => (b.t || '').localeCompare(a.t || ''));
+    const dealLine = d.deals.length ? d.deals.map((x) => `<span class="tag ${x.stage === 'won' ? 'good' : 'warm'}">${esc(x.title)} — ${esc(x.stage)}</span>`).join(' ') : '<span class="muted small">No deals</span>';
+    wrap.innerHTML = `
+      <button class="btn small ghost" onclick="renderContacts()">← All contacts</button>
+      <div class="card" style="margin-top:10px">
+        <div class="row"><div><h2 style="margin:0">${esc(c.name || c.email)}</h2>
+          <div class="muted small">${esc(c.email)}</div></div>
+          <button class="btn small primary" onclick="openCompose('${esc(c.email)}')">✏️ Email</button></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
+          <input class="subj" id="ct-name" placeholder="Name" value="${esc(c.name || '')}" />
+          <input class="subj" id="ct-company" placeholder="Company" value="${esc(c.company || '')}" />
+          <input class="subj" id="ct-title" placeholder="Title" value="${esc(c.title || '')}" />
+          <input class="subj" id="ct-phone" placeholder="Phone" value="${esc(c.phone || '')}" />
+        </div>
+        <textarea class="edit" id="ct-notes" placeholder="Notes" style="min-height:60px;width:100%">${esc(c.notes || '')}</textarea>
+        <div class="actions"><button class="btn small primary" onclick="saveContact('${esc(c.email)}')">Save contact</button>
+          <span id="ct-status" class="muted small"></span></div>
+        <div style="margin-top:8px">${dealLine}</div>
+        ${d.memory ? `<div class="muted small" style="margin-top:8px">🧠 ${esc(d.memory)}</div>` : ''}
+      </div>
+      <div class="card">
+        <strong>Activity (${acts.length})</strong>
+        <div style="margin-top:8px">${acts.length ? acts.slice(0, 60).map((a) => `<div class="row" style="padding:3px 0"><span class="small">${a.kind}: ${esc(a.text)}</span><span class="muted small">${a.t ? fmtDate(a.t) : ''}</span></div>`).join('') : '<div class="muted small">No recorded activity yet.</div>'}</div>
+      </div>`;
+  } catch (e) { wrap.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+};
+window.saveContact = async (email) => {
+  $('#ct-status').textContent = 'Saving…';
+  try {
+    await api('/api/contacts', { method: 'POST', body: { email, name: $('#ct-name').value, company: $('#ct-company').value, title: $('#ct-title').value, phone: $('#ct-phone').value, notes: $('#ct-notes').value } });
+    $('#ct-status').textContent = '✅ Saved.';
+    toast('Contact saved. 🐕');
+  } catch (e) { $('#ct-status').textContent = 'Error: ' + e.message; }
 };
 
 // ── Sent mailbox ─────────────────────────────────────────────────────────
@@ -329,13 +413,13 @@ window.remember = async (email) => {
   catch (e) { toast('Error: ' + e.message); }
 };
 
-window.draftReply = async (id) => {
-  toast('Big Dog is drafting…');
+window.draftReply = async (id, replyAll = false) => {
+  toast(replyAll ? 'Drafting a reply-all…' : 'Big Dog is drafting…');
   try {
-    const { autoSent } = await api(`/api/messages/${id}/draft`, { method: 'POST' });
+    const { autoSent } = await api(`/api/messages/${id}/draft`, { method: 'POST', body: { replyAll } });
     await load();
     if (autoSent) { toast('Sent it. 🐕'); }
-    else { switchTab('drafts'); toast('Draft ready — review it.'); }
+    else { switchTab('drafts'); toast(replyAll ? 'Reply-all draft ready (Cc filled in).' : 'Draft ready — review it.'); }
   } catch (e) { toast('Error: ' + e.message); }
 };
 
@@ -460,12 +544,14 @@ window.syncCalcom = async () => {
 // ── Drafts ───────────────────────────────────────────────────────────────
 function renderDrafts() {
   const el = $('#drafts');
+  loadContactsDatalist();
   if (!state.drafts.length) { el.innerHTML = '<div class="empty">No drafts waiting. Draft a reply from the Inbox.</div>'; return; }
   el.innerHTML = state.drafts
     .map(
       (d) => `
     <div class="card">
       <div class="muted small">To: ${esc(d.toEmails)}</div>
+      <input class="subj" id="cc-${d.id}" list="contacts-dl" placeholder="Cc (comma-separated)" value="${esc(d.ccEmails || '')}" />
       <input class="subj" id="subj-${d.id}" value="${esc(d.subject)}" />
       <textarea class="edit" id="draft-${d.id}">${esc(d.body)}</textarea>
       ${d.rationale ? `<div class="muted small" style="margin-top:6px">🐕 ${esc(d.rationale)}</div>` : ''}
@@ -496,8 +582,9 @@ window.unschedule = async (id) => {
 window.sendDraft = async (id) => {
   const body = $('#draft-' + id).value;
   const subject = $('#subj-' + id).value;
+  const cc = $('#cc-' + id) ? $('#cc-' + id).value.trim() : '';
   try {
-    const r = await api(`/api/drafts/${id}/send`, { method: 'POST', body: { body, subject } });
+    const r = await api(`/api/drafts/${id}/send`, { method: 'POST', body: { body, subject, cc } });
     await load();
     toast(r.note || 'Sent. 🐕');
   } catch (e) { toast('Error: ' + e.message); }
@@ -1173,6 +1260,7 @@ function switchTab(name) {
   if (name === 'prospect') renderProspect();
   if (name === 'activity') renderActivity();
   if (name === 'sent') renderSent();
+  if (name === 'contacts') renderContacts();
   if (name === 'settings') renderSettings();
 }
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { messages } from './db.js';
+import { messages, contacts } from './db.js';
 import { threadKey } from './threading.js';
 
 /**
@@ -35,4 +35,5 @@ export function recordSentMessage(opts: {
     summary: 'Sent by you',
     analyzed: 1,
   });
+  for (const e of opts.toEmails.split(/[,;]/)) contacts.seen(e.trim());
 }

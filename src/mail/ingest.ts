@@ -1,7 +1,7 @@
 import { ImapFlow } from 'imapflow';
 import { simpleParser, type ParsedMail } from 'mailparser';
 import { createHash } from 'node:crypto';
-import { messages } from '../db.js';
+import { messages, contacts } from '../db.js';
 import { threadKey } from '../threading.js';
 import type { Account, Message } from '../types.js';
 
@@ -91,6 +91,14 @@ async function ingestMailbox(client: ImapFlow, account: Account, path: string, f
       };
       record.threadId = threadKey(record.subject, otherEmail);
       messages.upsert(record);
+      // Build the contact book from real correspondence.
+      if (isSent) {
+        for (const r of (parsed.to && (Array.isArray(parsed.to) ? parsed.to : [parsed.to]).flatMap((a) => a.value) || [])) {
+          if (r.address) contacts.seen(r.address, r.name || '', record.date);
+        }
+      } else if (from?.address) {
+        contacts.seen(from.address, from.name || '', record.date);
+      }
       added++;
     }
   } finally {
