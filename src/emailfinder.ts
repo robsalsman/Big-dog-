@@ -24,7 +24,14 @@ export interface EmailResult {
   pattern?: string; // the learned pattern key applied, if any
 }
 
-const PROBE_FROM = 'verify@bigdog.local';
+// The MAIL FROM we announce during an SMTP RCPT probe. Many mail servers reject
+// probes from a non-routable sender (e.g. a `.local` domain) via sender callout,
+// so this must be a REAL, resolvable address on a domain you control — ideally
+// one whose A/MX records and the VPS's reverse-DNS (PTR) line up. Set
+// PROBE_FROM (or fall back to the deploy hostname) on a box with port 25 open.
+const PROBE_FROM =
+  process.env.PROBE_FROM ||
+  (process.env.PUBLIC_HOSTNAME ? `verify@${process.env.PUBLIC_HOSTNAME}` : 'verify@bigdog.builda.company');
 
 export function clean(s: string): string {
   return (s || '').toLowerCase().normalize('NFKD').replace(/[^a-z]/g, '');
