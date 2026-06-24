@@ -27,7 +27,7 @@ import { triageNewMail } from './pipeline.js';
 import { generateDigest } from './digest.js';
 import { exportIcs } from './calendar.js';
 import { calcomConfigured, syncCalcomBookings } from './calcom.js';
-import { zoomConfigured, createZoomMeeting, saveZoomCreds, publicZoom, testZoom } from './zoom.js';
+import { zoomConfigured, createZoomMeeting, saveZoomCreds, publicZoom, testZoom, getMeetingTranscript } from './zoom.js';
 import { browserConfigured, browserReady } from './browser.js';
 import type { BigDogBrain } from './brain.js';
 import type { AppConfig } from './config.js';
@@ -446,10 +446,12 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     // Create a real Zoom meeting if Zoom is connected.
     let videoLink = cfg.calcom?.bookingUrl || '';
     let videoNote = '';
+    let zoomMeetingId: string | null = null;
     if (zoomConfigured()) {
       try {
         const z = await createZoomMeeting({ topic: title, startISO: start.toISOString(), minutes });
         videoLink = z.joinUrl;
+        zoomMeetingId = z.meetingId;
         videoNote = `Zoom: ${z.joinUrl}${z.password ? ` (passcode ${z.password})` : ''}`;
       } catch (err) {
         logActivity('error', `Zoom meeting create failed: ${(err as Error).message}`);
@@ -458,7 +460,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
 
     const evt: CalendarEvent = {
       id: randomUUID().slice(0, 16), title, start: start.toISOString(), end: end.toISOString(),
-      location: videoLink || 'Video call', attendees: to, notes: videoNote || 'Created from Big Dog compose.', dealId: null, source: 'big-dog',
+      location: videoLink || 'Video call', attendees: to, notes: videoNote || 'Created from Big Dog compose.', dealId: null, source: 'big-dog', zoomMeetingId,
     };
     events.upsert(evt);
     const when = start.toISOString().slice(0, 16).replace('T', ' ');
@@ -487,6 +489,34 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     res.json(publicZoom());
   });
   app.post('/api/zoom/test', async (_req, res) => res.json(await testZoom()));
+
+  // Pull a Zoom meeting transcript and draft the follow-up (→ close).
+  app.post('/api/meeting/:eventId/followup', async (req, res) => {
+    const evt = events.get(req.params.eventId);
+    if (!evt) return res.status(404).json({ error: 'event not found' });
+    const meetingId = evt.zoomMeetingId || String(req.body?.meetingId ?? '');
+    if (!meetingId) return res.status(400).json({ error: 'no Zoom meeting linked to this event' });
+    if (!zoomConfigured()) return res.status(400).json({ error: 'connect Zoom first (Settings → Video meetings)' });
+    try {
+      const transcript = await getMeetingTranscript(meetingId);
+      if (!transcript.trim()) return res.status(400).json({ error: 'transcript is empty or still processing' });
+      const to = (evt.attendees || '').split(/[,;]/)[0]?.trim() || '';
+      const contact = { name: contacts.get(to)?.name || '', company: contacts.get(to)?.company || '', email: to };
+      const f = await brain.meetingFollowup(transcript, contact);
+      if (to) memories.add(to, `Meeting recap (${evt.title}): ${f.summary}`.slice(0, 600));
+      const draft: Draft = {
+        id: randomUUID().slice(0, 16), accountId: allAccounts()[0]?.id ?? 'demo', inReplyTo: null, dealId: evt.dealId,
+        toEmails: to, ccEmails: null, attachmentIds: null, subject: f.subject, body: f.body,
+        rationale: `Post-meeting follow-up from the Zoom transcript. Action items: ${f.actionItems.join('; ') || '—'}`,
+        status: 'pending', createdAt: new Date().toISOString(), sentAt: null,
+      };
+      drafts.insert(draft);
+      logActivity('followup', `Drafted post-meeting follow-up to ${to || 'attendee'} from "${evt.title}" transcript`);
+      res.json({ ok: true, summary: f.summary, actionItems: f.actionItems, draftId: draft.id });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
 
   // List sent mail (for the Sent view + searchable history).
   app.get('/api/sent', (_req, res) => res.json({ messages: messages.recentSent(300) }));

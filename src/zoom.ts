@@ -89,6 +89,32 @@ export async function createZoomMeeting(
   return { joinUrl: d.join_url, startUrl: d.start_url ?? '', meetingId: String(d.id ?? ''), password: d.password };
 }
 
+/** Strip WEBVTT cue numbers/timestamps to plain dialogue text. */
+function vttToText(vtt: string): string {
+  return vtt
+    .replace(/^WEBVTT.*$/im, '')
+    .split('\n')
+    .filter((l) => !/^\d+$/.test(l.trim()) && !/-->/.test(l) && l.trim() !== '')
+    .join('\n')
+    .trim();
+}
+
+/** Fetch a Zoom meeting's cloud-recording transcript (VTT), as plain text. */
+export async function getMeetingTranscript(meetingId: string, c: ZoomCreds = loadZoomCreds()): Promise<string> {
+  const token = await getToken(c);
+  const res = await fetch(`https://api.zoom.us/v2/meetings/${encodeURIComponent(meetingId)}/recordings`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`Zoom recordings ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+  const data = (await res.json()) as { recording_files?: { file_type?: string; download_url?: string }[] };
+  const file = (data.recording_files || []).find((f) => (f.file_type || '').toUpperCase() === 'TRANSCRIPT');
+  if (!file?.download_url) throw new Error('No transcript found — enable cloud recording + audio transcript in Zoom, and wait until processing finishes.');
+  const dl = await fetch(`${file.download_url}?access_token=${token}`, { signal: AbortSignal.timeout(20_000) });
+  if (!dl.ok) throw new Error(`Transcript download ${dl.status}`);
+  return vttToText(await dl.text());
+}
+
 export async function testZoom(c: ZoomCreds = loadZoomCreds()): Promise<{ ok: boolean; detail: string }> {
   if (!zoomConfigured(c)) return { ok: false, detail: 'Add your Account ID, Client ID and Client Secret first.' };
   try {

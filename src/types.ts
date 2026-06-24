@@ -80,6 +80,7 @@ export interface CalendarEvent {
   notes: string;
   dealId: string | null;
   source: string; // 'manual' | 'message' | 'big-dog'
+  zoomMeetingId?: string | null;
 }
 
 export interface Draft {

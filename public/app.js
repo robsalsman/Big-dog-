@@ -718,9 +718,20 @@ window.showDay = (key) => {
         <div class="when">${fmtTime(e.start)}</div>
         <div><strong>${esc(e.title)}</strong>
           <div class="muted small">${esc(e.location || '')} ${e.attendees ? '· ' + esc(e.attendees) : ''}</div>
-          ${e.notes ? `<div class="muted small">${esc(e.notes)}</div>` : ''}</div>
+          ${e.notes ? `<div class="muted small">${esc(e.notes)}</div>` : ''}
+          ${e.zoomMeetingId ? `<div style="margin-top:6px"><button class="btn small primary" onclick="meetingFollowup('${e.id}')">🎬 Pull transcript & draft follow-up</button> <span id="fu-${e.id}" class="muted small"></span></div>` : ''}</div>
       </div>`).join('') : '<div class="muted small" style="margin-top:8px">No meetings this day.</div>'}
   </div>`;
+};
+
+window.meetingFollowup = async (eventId) => {
+  const s = $('#fu-' + eventId); if (s) s.textContent = '🎬 Pulling transcript & drafting…';
+  try {
+    const r = await api('/api/meeting/' + eventId + '/followup', { method: 'POST' });
+    if (s) s.innerHTML = `✅ Follow-up drafted. ${r.actionItems && r.actionItems.length ? '(' + r.actionItems.length + ' action items)' : ''}`;
+    await load();
+    toast('Follow-up drafted from the transcript. Check Drafts. 🐕');
+  } catch (e) { if (s) s.textContent = 'Error: ' + e.message; }
 };
 
 window.syncCalcom = async () => {
@@ -1201,7 +1212,8 @@ async function renderSettings() {
       <strong>📹 Video meetings (Zoom)</strong> <span id="zoom-state" class="tag">checking…</span>
       <div class="muted small" style="margin:4px 0 8px">
         When connected, scheduling a meeting creates a real Zoom link and attaches it to the calendar event + invite email.
-        In Zoom Marketplace, build a <strong>Server-to-Server OAuth</strong> app, add the <code>meeting:write</code> scope, then paste the three values.
+        In Zoom Marketplace, build a <strong>Server-to-Server OAuth</strong> app, add scopes <code>meeting:write</code> (create meetings) and
+        <code>cloud_recording:read</code> (pull transcripts for follow-ups — also enable Cloud Recording + audio transcript in your Zoom settings), then paste the three values.
       </div>
       <input class="subj" id="zoom-accountId" placeholder="Account ID" style="width:100%" />
       <input class="subj" id="zoom-clientId" placeholder="Client ID" style="width:100%" />

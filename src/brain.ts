@@ -243,6 +243,36 @@ export class BigDogBrain {
     return { url, content: page.text, summarized: false };
   }
 
+  /**
+   * Turn a meeting transcript into a follow-up: a recap, action items, and a
+   * ready-to-send follow-up email in the owner's voice that drives to the next
+   * step / close.
+   */
+  async meetingFollowup(transcript: string, contact: { name?: string; company?: string; email?: string }): Promise<{ summary: string; actionItems: string[]; subject: string; body: string }> {
+    const who = `${contact.name || contact.email || 'the prospect'}${contact.company ? ` at ${contact.company}` : ''}`;
+    const fallback = { summary: 'Met with ' + who + '.', actionItems: [] as string[], subject: 'Great talking — next steps', body: `Hi,\n\nThanks for the time today. I'll follow up on what we discussed.\n\n${this.owner.signature}` };
+    if (!this.provider.live) return fallback;
+    const schema = {
+      type: 'object', additionalProperties: false,
+      properties: { summary: { type: 'string' }, actionItems: { type: 'array', items: { type: 'string' } }, subject: { type: 'string' }, body: { type: 'string' } },
+      required: ['summary', 'actionItems', 'subject', 'body'],
+    };
+    try {
+      const out = await this.raw(
+        `You're my sales follow-up engine. From this meeting transcript with ${who}, produce JSON ` +
+          `{"summary","actionItems","subject","body"}: a tight recap, the concrete action items/commitments, and a follow-up EMAIL in MY voice ` +
+          `that recaps value, confirms next steps, and drives toward the close. Reference specifics they actually said. Sign as me.\n\n` +
+          `TRANSCRIPT:\n${transcript.slice(0, 14_000)}`,
+        schema,
+        1600,
+      );
+      const o = JSON.parse(extractJson(out)) as { summary?: string; actionItems?: string[]; subject?: string; body?: string };
+      return { summary: o.summary || fallback.summary, actionItems: Array.isArray(o.actionItems) ? o.actionItems : [], subject: o.subject || fallback.subject, body: o.body || fallback.body };
+    } catch {
+      return fallback;
+    }
+  }
+
   /** Live web research on a lead (only when the backend supports it). */
   async research(query: string): Promise<string> {
     if (this.provider.webResearch) {

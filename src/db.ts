@@ -214,6 +214,12 @@ db.exec(`
   if (!cols.some((c) => c.name === 'attachmentIds')) db.exec('ALTER TABLE drafts ADD COLUMN attachmentIds TEXT');
 }
 
+// Migration: add events.zoomMeetingId (for transcript follow-up).
+{
+  const cols = db.prepare('PRAGMA table_info(events)').all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'zoomMeetingId')) db.exec('ALTER TABLE events ADD COLUMN zoomMeetingId TEXT');
+}
+
 // Migration: add sequences.autoSend.
 {
   const t = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sequences'").get();
@@ -338,12 +344,15 @@ export const deals = {
 export const events = {
   upsert(e: CalendarEvent) {
     db.prepare(
-      `INSERT INTO events (id, title, start, end, location, attendees, notes, dealId, source)
-       VALUES (@id, @title, @start, @end, @location, @attendees, @notes, @dealId, @source)
+      `INSERT INTO events (id, title, start, end, location, attendees, notes, dealId, source, zoomMeetingId)
+       VALUES (@id, @title, @start, @end, @location, @attendees, @notes, @dealId, @source, @zoomMeetingId)
        ON CONFLICT(id) DO UPDATE SET
         title=excluded.title, start=excluded.start, end=excluded.end,
-        location=excluded.location, attendees=excluded.attendees, notes=excluded.notes`,
-    ).run(e);
+        location=excluded.location, attendees=excluded.attendees, notes=excluded.notes, zoomMeetingId=excluded.zoomMeetingId`,
+    ).run({ ...e, zoomMeetingId: e.zoomMeetingId ?? null });
+  },
+  get(id: string): CalendarEvent | undefined {
+    return db.prepare('SELECT * FROM events WHERE id = ?').get(id) as CalendarEvent | undefined;
   },
   all(): CalendarEvent[] {
     return db.prepare('SELECT * FROM events ORDER BY start ASC').all() as CalendarEvent[];
