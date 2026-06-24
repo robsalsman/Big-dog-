@@ -14,6 +14,7 @@ import type {
   Contact,
   Sequence,
   Enrollment,
+  Attachment,
 } from './types.js';
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
@@ -131,6 +132,16 @@ db.exec(`
     ts TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS attachments (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    mime TEXT,
+    size INTEGER,
+    path TEXT,
+    notes TEXT,
+    createdAt TEXT
+  );
+
   CREATE TABLE IF NOT EXISTS contacts (
     email TEXT PRIMARY KEY,
     name TEXT,
@@ -195,6 +206,12 @@ db.exec(`
 {
   const cols = db.prepare('PRAGMA table_info(messages)').all() as { name: string }[];
   if (!cols.some((c) => c.name === 'category')) db.exec('ALTER TABLE messages ADD COLUMN category TEXT');
+}
+
+// Migration: add drafts.attachmentIds.
+{
+  const cols = db.prepare('PRAGMA table_info(drafts)').all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'attachmentIds')) db.exec('ALTER TABLE drafts ADD COLUMN attachmentIds TEXT');
 }
 
 // Migration: add sequences.autoSend.
@@ -342,9 +359,9 @@ export const events = {
 export const drafts = {
   insert(d: Draft) {
     db.prepare(
-      `INSERT INTO drafts (id, accountId, inReplyTo, dealId, toEmails, ccEmails, subject, body, rationale, status, createdAt, sentAt, sendAt)
-       VALUES (@id, @accountId, @inReplyTo, @dealId, @toEmails, @ccEmails, @subject, @body, @rationale, @status, @createdAt, @sentAt, @sendAt)`,
-    ).run({ ...d, ccEmails: d.ccEmails ?? null, sendAt: d.sendAt ?? null });
+      `INSERT INTO drafts (id, accountId, inReplyTo, dealId, toEmails, ccEmails, attachmentIds, subject, body, rationale, status, createdAt, sentAt, sendAt)
+       VALUES (@id, @accountId, @inReplyTo, @dealId, @toEmails, @ccEmails, @attachmentIds, @subject, @body, @rationale, @status, @createdAt, @sentAt, @sendAt)`,
+    ).run({ ...d, ccEmails: d.ccEmails ?? null, attachmentIds: d.attachmentIds ?? null, sendAt: d.sendAt ?? null });
   },
   setSendAt(id: string, sendAt: string | null) {
     db.prepare('UPDATE drafts SET sendAt = ? WHERE id = ?').run(sendAt, id);
@@ -437,6 +454,22 @@ export const contacts = {
   suggest(q: string, limit = 8): Contact[] {
     const like = `%${q}%`;
     return db.prepare('SELECT * FROM contacts WHERE email LIKE ? OR name LIKE ? OR company LIKE ? ORDER BY lastSeen DESC LIMIT ?').all(like, like, like, limit) as Contact[];
+  },
+};
+
+// ── Sales repository (attachments Big Dog can send) ──────────────────────
+export const attachments = {
+  add(a: Attachment) {
+    db.prepare('INSERT INTO attachments (id, name, mime, size, path, notes, createdAt) VALUES (@id, @name, @mime, @size, @path, @notes, @createdAt)').run(a);
+  },
+  all(): Attachment[] {
+    return db.prepare('SELECT * FROM attachments ORDER BY createdAt DESC').all() as Attachment[];
+  },
+  get(id: string): Attachment | undefined {
+    return db.prepare('SELECT * FROM attachments WHERE id = ?').get(id) as Attachment | undefined;
+  },
+  delete(id: string) {
+    db.prepare('DELETE FROM attachments WHERE id = ?').run(id);
   },
 };
 

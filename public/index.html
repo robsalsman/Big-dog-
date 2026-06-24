@@ -36,6 +36,7 @@
       <button class="tab" data-tab="sent">Sent</button>
       <button class="tab" data-tab="contacts">Contacts</button>
       <button class="tab" data-tab="campaigns">Campaigns</button>
+      <button class="tab" data-tab="repo">Repository</button>
       <button class="tab" data-tab="digest">Morning brief</button>
       <button class="tab" data-tab="chat">Ask Big Dog</button>
       <button class="tab" data-tab="activity">Activity</button>
@@ -51,6 +52,7 @@
       <section id="sent" class="panel"></section>
       <section id="contacts" class="panel"></section>
       <section id="campaigns" class="panel"></section>
+      <section id="repo" class="panel"></section>
       <section id="digest" class="panel"></section>
       <section id="chat" class="panel"></section>
       <section id="activity" class="panel"></section>
@@ -82,6 +84,7 @@
         <input id="cmp-subject" class="subj" placeholder="Subject" style="width:100%" />
         <textarea id="cmp-body" class="edit" style="width:100%;min-height:160px" placeholder="Write your message — or describe it below and hit ✨ AI help"></textarea>
         <input id="cmp-instruction" class="subj" placeholder="✨ Tell Big Dog what to say, then click AI help…" style="width:100%" />
+        <div id="cmp-attach" class="muted small" style="margin:4px 0"></div>
         <div class="actions" style="margin-top:8px;flex-wrap:wrap">
           <button class="btn" onclick="composeAI()">✨ AI help</button>
           <button class="btn primary" onclick="composeSend(false)">Queue as draft</button>

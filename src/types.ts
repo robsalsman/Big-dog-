@@ -89,6 +89,7 @@ export interface Draft {
   dealId: string | null;
   toEmails: string;
   ccEmails?: string | null; // comma-separated CC recipients
+  attachmentIds?: string | null; // JSON array of repository attachment ids
   subject: string;
   body: string;
   rationale: string;
@@ -125,6 +126,16 @@ export interface Enrollment {
   startedAt: string;
   nextRunAt: string;
   lastError: string | null;
+}
+
+export interface Attachment {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  path: string;
+  notes: string;
+  createdAt: string;
 }
 
 export interface Contact {

@@ -244,7 +244,9 @@ window.openCompose = (to = '') => {
   $('#cmp-instruction').value = ''; $('#cmp-status').textContent = '';
   $('#cmp-meeting').style.display = 'none';
   $('#compose').style.display = 'flex';
+  __composeAtt = [];
   loadContactsDatalist();
+  loadComposeAttachments();
   setTimeout(() => $('#cmp-to').focus(), 50);
 };
 window.closeCompose = () => { $('#compose').style.display = 'none'; };
@@ -270,7 +272,7 @@ window.composeSend = async (now) => {
   if (!to.includes('@') || !body) { $('#cmp-status').textContent = 'Need a recipient and a message.'; return; }
   $('#cmp-status').textContent = now ? 'Sending…' : 'Queuing…';
   try {
-    const r = await api('/api/compose/send', { method: 'POST', body: { to, cc: $('#cmp-cc').value.trim(), subject: $('#cmp-subject').value.trim() || '(no subject)', body, queue: !now } });
+    const r = await api('/api/compose/send', { method: 'POST', body: { to, cc: $('#cmp-cc').value.trim(), subject: $('#cmp-subject').value.trim() || '(no subject)', body, queue: !now, attachmentIds: __composeAtt } });
     closeCompose(); await load();
     toast(r.sent ? `Sent to ${to}. 🐕` : 'Queued in Drafts for approval. 🐕');
   } catch (e) { $('#cmp-status').textContent = 'Error: ' + e.message; }
@@ -447,6 +449,66 @@ window.enrollSeq = async (id) => {
 };
 window.stopEnrollment = async (id) => { try { await api('/api/enrollments/' + id + '/stop', { method: 'POST' }); renderCampaigns(); } catch (e) { toast('Error: ' + e.message); } };
 window.runDripNow = async () => { try { const r = await api('/api/sequences/run', { method: 'POST' }); toast(`Produced ${r.produced} touch(es). Check Drafts.`); await load(); renderCampaigns(); } catch (e) { toast('Error: ' + e.message); } };
+
+// ── Sales repository ─────────────────────────────────────────────────────
+async function renderRepo() {
+  const el = $('#repo');
+  el.innerHTML = `
+    <div class="row" style="margin-bottom:10px"><h2 style="margin:0">📁 Sales repository</h2></div>
+    <div class="muted small" style="margin-bottom:12px">Datasheets, one-pagers, case studies — anything Big Dog can attach to emails. Add files here, then pick them when composing or in a draft.</div>
+    <div class="card">
+      <input type="file" id="repo-file" class="subj" multiple />
+      <input class="subj" id="repo-notes" placeholder="Optional note (what this is / when to use it)" style="width:100%" />
+      <div class="actions"><button class="btn small primary" onclick="uploadRepo()">⬆ Upload</button><span id="repo-status" class="muted small"></span></div>
+    </div>
+    <div id="repo-list"><div class="muted">Loading…</div></div>`;
+  loadRepo();
+}
+async function loadRepo() {
+  const wrap = $('#repo-list'); if (!wrap) return;
+  try {
+    const { files } = await api('/api/repo');
+    wrap.innerHTML = files.length ? files.map((f) => `
+      <div class="card"><div class="row">
+        <div><strong>${esc(f.name)}</strong> <span class="muted small">· ${(f.size / 1024).toFixed(0)} KB</span>
+          ${f.notes ? `<div class="muted small">${esc(f.notes)}</div>` : ''}</div>
+        <div style="white-space:nowrap"><a class="btn small ghost" href="/api/repo/${f.id}/file" target="_blank">Download</a>
+          <button class="btn small ghost" onclick="deleteRepo('${f.id}')">Delete</button></div>
+      </div></div>`).join('') : '<div class="empty">No files yet. Upload your first datasheet above.</div>';
+  } catch (e) { wrap.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+}
+window.uploadRepo = async () => {
+  const input = $('#repo-file'); const files = input.files;
+  if (!files || !files.length) { $('#repo-status').textContent = 'Pick a file first.'; return; }
+  $('#repo-status').textContent = 'Uploading…';
+  try {
+    for (const file of files) {
+      const data = await fileToBase64(file);
+      await api('/api/repo', { method: 'POST', body: { name: file.name, mime: file.type, data, notes: $('#repo-notes').value.trim() } });
+    }
+    $('#repo-status').textContent = '✅ Uploaded.'; $('#repo-notes').value = ''; input.value = '';
+    loadRepo(); toast('Added to repository. 🐕');
+  } catch (e) { $('#repo-status').textContent = 'Error: ' + e.message; }
+};
+window.deleteRepo = async (id) => { if (!confirm('Delete this file?')) return; try { await api('/api/repo/' + id, { method: 'DELETE' }); loadRepo(); } catch (e) { toast('Error: ' + e.message); } };
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');
+    r.onerror = reject; r.readAsDataURL(file);
+  });
+}
+// Attachment picker used by the compose modal.
+let __composeAtt = [];
+async function loadComposeAttachments() {
+  const box = $('#cmp-attach'); if (!box) return;
+  try {
+    const { files } = await api('/api/repo');
+    if (!files.length) { box.innerHTML = '<span class="muted small">No repository files yet — add some under Repository.</span>'; return; }
+    box.innerHTML = '📎 Attach: ' + files.map((f) => `<label class="small" style="margin-right:10px"><input type="checkbox" value="${f.id}" onchange="toggleAtt('${f.id}',this.checked)"> ${esc(f.name)}</label>`).join('');
+  } catch { box.innerHTML = ''; }
+}
+window.toggleAtt = (id, on) => { __composeAtt = __composeAtt.filter((x) => x !== id); if (on) __composeAtt.push(id); };
 
 // ── Sent mailbox ─────────────────────────────────────────────────────────
 async function renderSent() {
@@ -1429,6 +1491,7 @@ function switchTab(name) {
   if (name === 'sent') renderSent();
   if (name === 'contacts') renderContacts();
   if (name === 'campaigns') renderCampaigns();
+  if (name === 'repo') renderRepo();
   if (name === 'settings') renderSettings();
 }
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));

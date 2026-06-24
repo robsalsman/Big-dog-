@@ -8,7 +8,7 @@ import type { Account } from '../types.js';
  */
 export async function sendMail(
   account: Account,
-  opts: { to: string; cc?: string | null; subject: string; body: string; inReplyTo?: string | null },
+  opts: { to: string; cc?: string | null; subject: string; body: string; inReplyTo?: string | null; attachments?: { filename: string; path: string; contentType: string }[] },
 ): Promise<{ messageId: string }> {
   const transport = nodemailer.createTransport({
     host: account.smtp.host,
@@ -23,6 +23,7 @@ export async function sendMail(
     cc: opts.cc || undefined,
     subject: opts.subject,
     text: opts.body,
+    attachments: opts.attachments && opts.attachments.length ? opts.attachments : undefined,
     inReplyTo: opts.inReplyTo ?? undefined,
     references: opts.inReplyTo ?? undefined,
   });

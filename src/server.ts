@@ -2,7 +2,8 @@ import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { messages, deals, events, drafts, memories, activity, suppressed, contacts, sequences, enrollments } from './db.js';
+import { messages, deals, events, drafts, memories, activity, suppressed, contacts, sequences, enrollments, attachments } from './db.js';
+import { saveAttachment, resolveAttachments } from './repo.js';
 import { createSequence, enrollContacts, runDueEnrollments, DEFAULT_SEQUENCE_STEPS } from './sequences.js';
 import { runAutopilot } from './autopilot.js';
 import { logActivity } from './activity.js';
@@ -242,8 +243,9 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       logActivity('send', `Marked sent to ${draft.toEmails} (demo — no live account): "${subject}"`);
       return res.json({ ok: true, note: 'No live account for this draft (demo) — marked as sent.' });
     }
+    const draftAtt = draft.attachmentIds ? (JSON.parse(draft.attachmentIds) as string[]) : [];
     try {
-      await sendMail(account, { to: draft.toEmails, cc, subject, body, inReplyTo: draft.inReplyTo });
+      await sendMail(account, { to: draft.toEmails, cc, subject, body, inReplyTo: draft.inReplyTo, attachments: resolveAttachments(draftAtt) });
       drafts.setStatus(draft.id, 'sent', new Date().toISOString());
       recordSentMessage({ accountId: account.id, fromName: account.label, fromEmail: account.email, toEmails: draft.toEmails, subject, body });
       logActivity('send', `Sent email to ${draft.toEmails}: "${subject}"`);
@@ -316,17 +318,19 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     if (!to.includes('@') || !body.trim()) return res.status(400).json({ error: 'need a recipient and a body' });
     const accountId = String(req.body?.accountId || allAccounts()[0]?.id || '');
     const account = accountById(accountId);
+    const attachmentIds: string[] = Array.isArray(req.body?.attachmentIds) ? req.body.attachmentIds.map(String) : [];
     const queue = !!req.body?.queue || !account;
     if (queue) {
       const draft: Draft = {
         id: randomUUID().slice(0, 16), accountId: accountId || 'demo', inReplyTo: null, dealId: null,
-        toEmails: to, ccEmails: cc, subject, body, rationale: 'Composed by you.', status: 'pending', createdAt: new Date().toISOString(), sentAt: null,
+        toEmails: to, ccEmails: cc, attachmentIds: attachmentIds.length ? JSON.stringify(attachmentIds) : null,
+        subject, body, rationale: 'Composed by you.', status: 'pending', createdAt: new Date().toISOString(), sentAt: null,
       };
       drafts.insert(draft);
       return res.json({ ok: true, queued: true, draftId: draft.id });
     }
     try {
-      await sendMail(account!, { to, cc, subject, body });
+      await sendMail(account!, { to, cc, subject, body, attachments: resolveAttachments(attachmentIds) });
       recordSentMessage({ accountId: account!.id, fromName: account!.label, fromEmail: account!.email, toEmails: to, subject, body });
       logActivity('send', `Sent email to ${to}: "${subject}"`);
       res.json({ ok: true, sent: true });
@@ -384,6 +388,27 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   app.post('/api/sequences/run', async (_req, res) => {
     try { res.json({ produced: await runDueEnrollments(brain, cfg) }); }
     catch (err) { res.status(500).json({ error: (err as Error).message }); }
+  });
+
+  // ── Sales repository (attachments) ──────────────────────────────────
+  app.get('/api/repo', (_req, res) => res.json({ files: attachments.all().map((a) => ({ id: a.id, name: a.name, mime: a.mime, size: a.size, notes: a.notes, createdAt: a.createdAt })) }));
+  app.post('/api/repo', (req, res) => {
+    const name = String(req.body?.name ?? '').trim();
+    const base64 = String(req.body?.data ?? '');
+    if (!name || !base64) return res.status(400).json({ error: 'need {name, data(base64)}' });
+    try {
+      const a = saveAttachment(name, String(req.body?.mime ?? ''), base64, String(req.body?.notes ?? ''));
+      logActivity('repo', `Added "${a.name}" to the sales repository`);
+      res.json({ ok: true, id: a.id, name: a.name, size: a.size });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+  app.delete('/api/repo/:id', (req, res) => { attachments.delete(req.params.id); res.json({ ok: true }); });
+  app.get('/api/repo/:id/file', (req, res) => {
+    const a = attachments.get(req.params.id);
+    if (!a) return res.status(404).json({ error: 'not found' });
+    res.download(a.path, a.name);
   });
 
   // ── Contacts (CRM) ──────────────────────────────────────────────────
