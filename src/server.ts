@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
-import { messages, deals, events, drafts, memories, activity, suppressed, contacts, sequences, enrollments, attachments } from './db.js';
+import { messages, deals, events, drafts, memories, activity, suppressed, contacts, sequences, enrollments, attachments, runWithUser, setContextBrain, currentBrainRaw, currentUserId, users } from './db.js';
 import { saveAttachment, resolveAttachments } from './repo.js';
 import { createSequence, enrollContacts, runDueEnrollments, DEFAULT_SEQUENCE_STEPS } from './sequences.js';
 import { runAutopilot } from './autopilot.js';
@@ -19,8 +19,9 @@ import type { Account } from './types.js';
 import { loadSettings, saveSettings, buildProvider, publicSettings, testProvider } from './settings.js';
 import { loadOwner, saveOwner } from './profile.js';
 import {
-  isAuthConfigured, setPassword, verifyPassword, issueToken, verifyToken, parseCookies, COOKIE,
+  anyUsers, createAccount, verifyCredentials, setUserPassword, issueToken, verifyToken, parseCookies, COOKIE,
 } from './auth.js';
+import { brainForUser } from './userbrain.js';
 import type { Prospect } from './types.js';
 import { syncAll } from './mail/ingest.js';
 import { sendMail } from './mail/send.js';
@@ -43,7 +44,7 @@ import { DEAL_STAGES } from './types.js';
 const here = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = resolve(here, '..', 'public');
 
-export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain: BigDogBrain) {
+export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaultBrain: BigDogBrain) {
   const app = express();
   app.set('trust proxy', 1); // behind a TLS reverse proxy (Caddy/nginx) in production
   app.use(express.json({ limit: '25mb' }));
@@ -72,7 +73,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const owner = loadTwilioCreds().ownerMobile;
     if (!owner || digits(from) !== digits(owner)) return xml(''); // ignore anyone but the owner
     try {
-      const quick = await handleOwnerSms(body, brain, cfg);
+      const quick = await handleOwnerSms(body, reqBrain(), cfg);
       if (quick !== null) return xml(quick);
     } catch (err) {
       return xml(`Error: ${(err as Error).message}`);
@@ -80,7 +81,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     // Free-form: acknowledge now, run the operator agent, then text the result.
     void (async () => {
       try {
-        const run = await runAgent(body, agentCtx);
+        const run = await runAgent(body, agentCtx());
         await sendSms(`🐕 ${run.final}`.slice(0, 600)).catch(() => {});
       } catch (err) {
         await sendSms(`Hit a snag on that: ${(err as Error).message}`.slice(0, 300)).catch(() => {});
@@ -101,50 +102,71 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   };
 
   // ── Auth (unguarded) ────────────────────────────────────────────────
+  // The dashboard always requires login now (multi-user). If no accounts exist
+  // yet, the client shows a "create account" form and the first signup becomes
+  // the admin, inheriting any pre-existing single-user data.
   app.get('/api/auth/status', (req, res) => {
-    res.json({ required: isAuthConfigured(), authed: !isAuthConfigured() || verifyToken(cookieOf(req)) });
+    const uid = verifyToken(cookieOf(req));
+    res.json({ required: true, hasAccounts: anyUsers(), authed: !!uid });
+  });
+  app.post('/api/auth/signup', (req, res) => {
+    try {
+      const row = createAccount(String(req.body?.username ?? ''), String(req.body?.password ?? ''), String(req.body?.email ?? ''));
+      setSession(req, res, issueToken(row.id), 30 * 86_400);
+      res.json({ ok: true, username: row.username, role: row.role });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
   });
   app.post('/api/auth/login', (req, res) => {
-    if (!isAuthConfigured() || verifyPassword(String(req.body?.password ?? ''))) {
-      setSession(req, res, issueToken(), 30 * 86_400);
-      return res.json({ ok: true });
-    }
-    res.status(401).json({ error: 'wrong password' });
+    const row = verifyCredentials(String(req.body?.username ?? '').trim(), String(req.body?.password ?? ''));
+    if (!row) return res.status(401).json({ error: 'Wrong username or password.' });
+    setSession(req, res, issueToken(row.id), 30 * 86_400);
+    res.json({ ok: true, username: row.username, role: row.role });
   });
   app.post('/api/auth/logout', (req, res) => {
     setSession(req, res, '', 0);
     res.json({ ok: true });
   });
   app.post('/api/auth/password', (req, res) => {
+    const uid = verifyToken(cookieOf(req));
+    if (!uid) return res.status(401).json({ error: 'login required' });
     const next = String(req.body?.password ?? '');
     if (next.length < 6) return res.status(400).json({ error: 'password must be at least 6 characters' });
-    // To change an existing password you must already be authed (or give the current one).
-    if (isAuthConfigured()) {
-      const ok = verifyToken(cookieOf(req)) || verifyPassword(String(req.body?.current ?? ''));
-      if (!ok) return res.status(401).json({ error: 'current password or login required' });
-    }
-    setPassword(next);
-    setSession(req, res, issueToken(), 30 * 86_400);
+    setUserPassword(uid, next);
+    setSession(req, res, issueToken(uid), 30 * 86_400);
     res.json({ ok: true });
   });
 
-  // ── Guard everything else under /api ────────────────────────────────
+  // ── Guard + per-user context for everything else under /api ─────────
+  // Verify the session, then run the rest of the request inside the logged-in
+  // user's AsyncLocalStorage context so every store call hits their own DB and
+  // reqBrain() resolves to their brain.
   app.use((req, res, next) => {
     if (!req.path.startsWith('/api/')) return next();
     if (req.path.startsWith('/api/auth/')) return next();
-    if (!isAuthConfigured() || verifyToken(cookieOf(req))) return next();
-    res.status(401).json({ error: 'authentication required' });
+    const uid = verifyToken(cookieOf(req));
+    if (!uid) return res.status(401).json({ error: 'authentication required' });
+    runWithUser(uid, () => {
+      setContextBrain(brainForUser(uid, cfg));
+      next();
+    });
   });
 
   const accountById = (id: string) => getAccount(id);
-  const agentCtx = { cfg, accounts: accountsCfg, brain };
+  // The active brain for this request: the logged-in user's (set by the auth
+  // middleware), falling back to the default-user brain outside a session.
+  const reqBrain = (): BigDogBrain => (currentBrainRaw() as BigDogBrain) ?? defaultBrain;
+  const agentCtx = () => ({ cfg, accounts: accountsCfg, brain: reqBrain() });
 
   // ── Whole-world snapshot for the dashboard ──────────────────────────
   app.get('/api/state', (_req, res) => {
+    const me = users.byId(currentUserId());
     res.json({
       owner: cfg.owner,
-      brainLive: brain.live,
-      backend: brain.backend,
+      user: me ? { username: me.username, role: me.role, email: me.email } : null,
+      brainLive: reqBrain().live,
+      backend: reqBrain().backend,
       sendMode: cfg.sendMode,
       autoDraft: cfg.autoDraft,
       accounts: allAccounts().map((a) => ({ id: a.id, label: a.label, email: a.email })),
@@ -155,9 +177,9 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       voice: { configured: voiceConfigured() },
       verify: { configured: verifierConfigured() },
       setup: {
-        claude: brain.live,
+        claude: reqBrain().live,
         mailbox: allAccounts().length > 0,
-        password: isAuthConfigured(),
+        password: true,
         verify: verifierConfigured(),
         zoom: zoomConfigured(),
         twilio: twilioConfigured(),
@@ -182,7 +204,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   app.post('/api/sync', async (_req, res) => {
     try {
       const synced = await syncAll(allAccounts());
-      const triaged = await triageNewMail(brain, cfg, accountsCfg);
+      const triaged = await triageNewMail(reqBrain(), cfg, accountsCfg);
       const bookings = calcomConfigured(cfg) ? await syncCalcomBookings(cfg).catch(() => 0) : 0;
       const newMail = synced.reduce((n, s) => n + s.added, 0);
       logActivity('sync', `Synced ${newMail} new message(s)${bookings ? `, ${bookings} booking(s)` : ''}`);
@@ -205,7 +227,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
 
   app.post('/api/triage', async (_req, res) => {
     try {
-      const triaged = await triageNewMail(brain, cfg, accountsCfg);
+      const triaged = await triageNewMail(reqBrain(), cfg, accountsCfg);
       res.json({ triaged });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -230,7 +252,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       cc = [...new Set(others)].join(', ') || null;
     }
     try {
-      const { subject, body, rationale } = await brain.draftReply(m, deal, memory, thread);
+      const { subject, body, rationale } = await reqBrain().draftReply(m, deal, memory, thread);
       const draft: Draft = {
         id: randomUUID().slice(0, 16),
         accountId: m.accountId,
@@ -362,7 +384,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     if (!instruction) return res.status(400).json({ error: 'tell Big Dog what you want to say' });
     const to = String(req.body?.to ?? '').trim();
     try {
-      const r = await brain.composeEmail({ to, subject: req.body?.subject, draft: req.body?.body, instruction, memory: to ? memories.recall(to) : '' });
+      const r = await reqBrain().composeEmail({ to, subject: req.body?.subject, draft: req.body?.body, instruction, memory: to ? memories.recall(to) : '' });
       res.json(r);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -404,7 +426,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const goal = String(req.body?.goal ?? '').trim();
     if (!goal) return res.status(400).json({ error: 'tell Big Dog the goal, e.g. "10 meetings with security guard company owners"' });
     try {
-      const result = await runAutopilot(goal, { fullyAutomate: !!req.body?.fullyAutomate, accountId: req.body?.accountId }, brain, cfg);
+      const result = await runAutopilot(goal, { fullyAutomate: !!req.body?.fullyAutomate, accountId: req.body?.accountId }, reqBrain(), cfg);
       res.json(result);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -446,7 +468,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   });
   // Manually advance due touches now (otherwise the scheduler does it).
   app.post('/api/sequences/run', async (_req, res) => {
-    try { res.json({ produced: await runDueEnrollments(brain, cfg) }); }
+    try { res.json({ produced: await runDueEnrollments(reqBrain(), cfg) }); }
     catch (err) { res.status(500).json({ error: (err as Error).message }); }
   });
 
@@ -500,7 +522,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const m = messages.get(req.params.id);
     if (!m || !m.fromEmail) return res.status(404).json({ error: 'message not found' });
     try {
-      const r = await bookFromMessage(m, { whenISO: req.body?.whenISO, minutes: req.body?.minutes }, brain, cfg);
+      const r = await bookFromMessage(m, { whenISO: req.body?.whenISO, minutes: req.body?.minutes }, reqBrain(), cfg);
       res.json(r);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -547,9 +569,9 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const link = videoLink ? ` Include this video meeting link: ${videoLink}.` : (cfg.calcom?.bookingUrl ? ` Include this booking link: ${cfg.calcom.bookingUrl}.` : '');
     let subject = `Invite: ${title}`;
     let body = `Hi,\n\nProposing ${title} on ${when} for ${minutes} minutes.${videoLink ? `\n\nJoin link: ${videoLink}` : (cfg.calcom?.bookingUrl ? `\n\nBook/confirm here: ${cfg.calcom.bookingUrl}` : '')}\n\n${cfg.owner.signature}`;
-    if (brain.live) {
+    if (reqBrain().live) {
       try {
-        const c = await brain.composeEmail({ to, subject, instruction: `Write a short, friendly meeting invite for "${title}" on ${when} (${minutes} minutes).${link}` });
+        const c = await reqBrain().composeEmail({ to, subject, instruction: `Write a short, friendly meeting invite for "${title}" on ${when} (${minutes} minutes).${link}` });
         subject = c.subject; body = c.body;
       } catch { /* keep template */ }
     }
@@ -635,7 +657,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
       if (!transcript.trim()) return res.status(400).json({ error: 'transcript is empty or still processing' });
       const to = (evt.attendees || '').split(/[,;]/)[0]?.trim() || '';
       const contact = { name: contacts.get(to)?.name || '', company: contacts.get(to)?.company || '', email: to };
-      const f = await brain.meetingFollowup(transcript, contact);
+      const f = await reqBrain().meetingFollowup(transcript, contact);
       if (to) memories.add(to, `Meeting recap (${evt.title}): ${f.summary}`.slice(0, 600));
       const draft: Draft = {
         id: randomUUID().slice(0, 16), accountId: allAccounts()[0]?.id ?? 'demo', inReplyTo: null, dealId: evt.dealId,
@@ -660,9 +682,9 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     if (sent.length < 3) return res.status(400).json({ error: 'Not enough sent mail yet — sync your mailbox first (need a few sent emails to learn from).' });
     const samples = sent.map((m) => `Subject: ${m.subject}\n${m.body}`).join('\n\n---\n\n').slice(0, 16000);
     try {
-      const r = await brain.learnVoice(samples);
+      const r = await reqBrain().learnVoice(samples);
       saveOwner({ voiceNotes: r.voiceNotes });
-      brain.setOwner(loadOwner(cfg));
+      reqBrain().setOwner(loadOwner(cfg));
       res.json({ ok: true, observations: r.observations, samples: sent.length });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -736,7 +758,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   // ── Digest + chat ───────────────────────────────────────────────────
   app.post('/api/digest', async (_req, res) => {
     try {
-      const content = await generateDigest(brain);
+      const content = await generateDigest(reqBrain());
       res.json({ content });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -747,7 +769,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const question = (req.body?.question as string) ?? '';
     if (!question.trim()) return res.status(400).json({ error: 'empty question' });
     try {
-      const answer = await brain.chat(question, deals.all(), messages.recent(40), events.upcoming());
+      const answer = await reqBrain().chat(question, deals.all(), messages.recent(40), events.upcoming());
       res.json({ answer });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -759,7 +781,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const goal = (req.body?.goal as string) ?? '';
     if (!goal.trim()) return res.status(400).json({ error: 'empty goal' });
     try {
-      const run = await runAgent(goal, agentCtx);
+      const run = await runAgent(goal, agentCtx());
       res.json(run);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -771,7 +793,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const query = (req.body?.query as string) ?? '';
     if (!query.trim()) return res.status(400).json({ error: 'empty query' });
     try {
-      res.json({ brief: await brain.research(query) });
+      res.json({ brief: await reqBrain().research(query) });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -783,7 +805,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const instruction = (req.body?.instruction as string) ?? '';
     if (!url.trim()) return res.status(400).json({ error: 'empty url' });
     try {
-      res.json(await brain.browse(url.trim(), instruction));
+      res.json(await reqBrain().browse(url.trim(), instruction));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -792,7 +814,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   // ── Follow-up cadence sweep ─────────────────────────────────────────
   app.post('/api/cadence/run', async (_req, res) => {
     try {
-      const created = await runCadenceSweep(agentCtx);
+      const created = await runCadenceSweep(agentCtx());
       res.json({ created });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -817,8 +839,8 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const criteria = (req.body?.criteria as string) ?? '';
     if (!criteria.trim()) return res.status(400).json({ error: 'describe who to find' });
     try {
-      const prospects = await findProspects(criteria, cfg, brain);
-      res.json({ provider: activeProvider(cfg), prospects, brainLive: brain.live, webCapable: brain.webCapable, backend: brain.backend });
+      const prospects = await findProspects(criteria, cfg, reqBrain());
+      res.json({ provider: activeProvider(cfg), prospects, brainLive: reqBrain().live, webCapable: reqBrain().webCapable, backend: reqBrain().backend });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -833,10 +855,10 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   // Bulk: import a CSV lead list and fill in each contact's email.
   app.post('/api/prospect/enrich', async (req, res) => {
     try {
-      const norm = req.body?.csv ? await normalizeCsv(String(req.body.csv), brain) : { rows: (req.body?.rows as Record<string, string>[]) ?? [], mapping: {}, headers: [] };
+      const norm = req.body?.csv ? await normalizeCsv(String(req.body.csv), reqBrain()) : { rows: (req.body?.rows as Record<string, string>[]) ?? [], mapping: {}, headers: [] };
       if (!norm.rows.length) return res.status(400).json({ error: 'no rows — paste a CSV with a header row (name/company/domain/…)' });
       const verify = !!req.body?.verify;
-      const enriched = await enrichRows(norm.rows, brain, { verify });
+      const enriched = await enrichRows(norm.rows, reqBrain(), { verify });
       if (req.body?.save) {
         for (const r of enriched) {
           if (r.email && r.confidence !== 'skipped') {
@@ -853,11 +875,11 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   // The campaign play: enrich a list → (research top N) → draft intros to all.
   app.post('/api/campaign/run', async (req, res) => {
     try {
-      const norm = req.body?.csv ? await normalizeCsv(String(req.body.csv), brain) : { rows: (req.body?.rows as Record<string, string>[]) ?? [] };
+      const norm = req.body?.csv ? await normalizeCsv(String(req.body.csv), reqBrain()) : { rows: (req.body?.rows as Record<string, string>[]) ?? [] };
       const rows = norm.rows;
       if (!rows.length) return res.status(400).json({ error: 'no rows — paste a CSV with a header row' });
       const accountId = allAccounts()[0]?.id ?? 'demo';
-      const result = await runCampaign(rows, brain, accountId, {
+      const result = await runCampaign(rows, reqBrain(), accountId, {
         verify: !!req.body?.verify,
         addToPipeline: req.body?.addToPipeline !== false,
         research: Number(req.body?.research ?? 0),
@@ -875,7 +897,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const name = (req.body?.name as string) ?? '';
     if (!domain.trim() || !name.trim()) return res.status(400).json({ error: 'need name and domain' });
     try {
-      res.json(await findContactEmail({ name, domain }, brain));
+      res.json(await findContactEmail({ name, domain }, reqBrain()));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -889,7 +911,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
   app.post('/api/profile', (req, res) => {
     saveOwner(req.body ?? {});
     const owner = loadOwner(cfg);
-    brain.setOwner(owner);
+    reqBrain().setOwner(owner);
     res.json(owner);
   });
 
@@ -898,7 +920,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     const samples = String(req.body?.samples ?? '').trim();
     if (samples.length < 80) return res.status(400).json({ error: 'paste at least a few of your real emails' });
     try {
-      res.json(await brain.learnVoice(samples));
+      res.json(await reqBrain().learnVoice(samples));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -906,7 +928,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
 
   // ── LLM backend settings (Claude / ChatGPT / Ollama) ────────────────
   app.get('/api/settings', (_req, res) => {
-    res.json({ ...publicSettings(loadSettings(cfg)), backend: brain.backend, live: brain.live });
+    res.json({ ...publicSettings(loadSettings(cfg)), backend: reqBrain().backend, live: reqBrain().live });
   });
 
   app.post('/api/settings', async (req, res) => {
@@ -924,11 +946,11 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
     } catch {
       /* ping is best-effort */
     }
-    brain.setProvider(provider);
+    reqBrain().setProvider(provider);
     // Verify with a real call so the user gets unambiguous confirmation.
-    let verified = brain.live;
-    let verifyDetail = brain.live ? `Connected to ${brain.backend}` : 'No backend configured.';
-    if (brain.live) {
+    let verified = reqBrain().live;
+    let verifyDetail = reqBrain().live ? `Connected to ${reqBrain().backend}` : 'No backend configured.';
+    if (reqBrain().live) {
       try {
         const t = await testProvider(provider);
         verified = t.ok;
@@ -938,7 +960,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, brain:
         verifyDetail = (err as Error).message;
       }
     }
-    res.json({ ...publicSettings(loadSettings(cfg)), backend: brain.backend, live: brain.live, verified, verifyDetail });
+    res.json({ ...publicSettings(loadSettings(cfg)), backend: reqBrain().backend, live: reqBrain().live, verified, verifyDetail });
   });
 
   app.post('/api/settings/test', async (req, res) => {

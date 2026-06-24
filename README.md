@@ -85,9 +85,11 @@ Beyond triage and drafting, Big Dog is a real agent:
   image bundles it + Chrome). (Prospect tab → *Read any web page*, or the `browse_page`
   operator tool. Toggle with `BIGDOG_BROWSER`.)
 
-- **Dashboard login** — protect the whole app (inbox, deals, sending) behind a
-  password (⚙ Settings → Security, or `BIGDOG_PASSWORD`). Open by default on a
-  trusted local machine.
+- **Multi-user accounts** — each person creates a username + password and gets a
+  fully private workspace (their own inbox, contacts, deals, settings, and
+  brain) in a separate SQLite database. The first account created is the admin;
+  pre-seed it with `BIGDOG_ADMIN_USER` / `BIGDOG_PASSWORD` or create it from the
+  login screen. Sessions are scrypt-hashed + signed cookies.
 - **True threading + sent mail** — replies you send are recorded and threaded with
   the conversation; the 🧵 Thread view shows both sides, and Big Dog drafts replies
   with the **whole thread** as context, not just the latest message.
@@ -296,7 +298,7 @@ src/
   brain.ts          The brain — triage, drafting, digest, chat (provider-agnostic)
   llm/provider.ts   Pluggable LLM backends: Claude · ChatGPT · Ollama · fallback
   settings.ts       Runtime backend/key settings (the ⚙ Settings screen)
-  auth.ts           Dashboard password login (scrypt + signed session cookie)
+  auth.ts           Multi-user accounts (scrypt + signed session cookie)
   accounts.ts       Live mailbox list (config file + in-app) and connection tests
   threading.ts      Conversation threading key
   sentmail.ts       Records sent email into the threaded store

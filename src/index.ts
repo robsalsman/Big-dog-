@@ -2,7 +2,7 @@ import { loadConfig, loadAccounts } from './config.js';
 import { BigDogBrain } from './brain.js';
 import { loadSettings, buildProvider } from './settings.js';
 import { loadOwner } from './profile.js';
-import { seedPasswordFromEnv, isAuthConfigured } from './auth.js';
+import { seedAdminFromEnv, anyUsers } from './auth.js';
 import { allAccounts } from './accounts.js';
 import { createServer } from './server.js';
 import { startScheduler } from './scheduler.js';
@@ -22,8 +22,8 @@ async function main() {
   if (provider.ping) await provider.ping();
   const brain = new BigDogBrain(provider, loadOwner(cfg), cfg.calcom?.bookingUrl);
 
-  // Seed a dashboard password from env if one isn't set yet.
-  seedPasswordFromEnv(process.env.BIGDOG_PASSWORD);
+  // Seed the first admin account from env on a fresh install (optional).
+  seedAdminFromEnv(process.env.BIGDOG_ADMIN_USER, process.env.BIGDOG_PASSWORD);
 
   // Detect the optional real-browser capability (Vercel Labs agent-browser).
   const browserOk = await ensureBrowser();
@@ -52,7 +52,7 @@ async function main() {
     console.log(`      Bots:       ${notifiers.length ? `${notifiers.length} connected` : 'none (add Telegram/Slack tokens to .env)'}`);
     console.log(`      Browser:    ${browserOk ? 'agent-browser ready 🌐' : 'off (install agent-browser CLI for live page reading)'}`);
     console.log(`      Send mode:  ${cfg.sendMode}`);
-    console.log(`      Auth:       ${isAuthConfigured() ? 'password set 🔒' : 'OPEN — set a password in ⚙ Settings'}`);
+    console.log(`      Auth:       ${anyUsers() ? 'accounts ready 🔒' : 'no accounts yet — create one on first visit'}`);
     console.log('');
   });
 }

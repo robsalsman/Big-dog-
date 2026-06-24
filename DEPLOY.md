@@ -68,7 +68,10 @@ cp .env.example .env
 Edit `.env` and set **at minimum**:
 
 ```ini
-# REQUIRED — protects the whole app (inbox, deals, the ability to send mail as you)
+# Optional — pre-seed the FIRST admin account. Or leave both blank and just
+# create the admin from the login screen on first visit. The first account
+# created is the admin; everyone else gets their own private data.
+BIGDOG_ADMIN_USER=<your username>
 BIGDOG_PASSWORD=<a long random password>
 
 # Your LLM backend (or leave blank and pick it in-app under ⚙ Settings)
@@ -109,8 +112,10 @@ docker compose logs -f bigdog   # app boot + brain status
 docker compose logs -f caddy    # TLS cert issuance
 ```
 
-Visit **https://bigdog.builda.company**, log in with `BIGDOG_PASSWORD`, and
-finish setup in ⚙ Settings.
+Visit **https://bigdog.builda.company**, create your admin account (or log in
+with the pre-seeded `BIGDOG_ADMIN_USER` / `BIGDOG_PASSWORD`), and finish setup
+in ⚙ Settings. Anyone you share the URL with can create their own account — each
+user gets a fully private inbox, contacts, deals, and settings.
 
 ---
 
@@ -143,8 +148,10 @@ docker compose start bigdog
 Big Dog can **read your mail and send email as you**. Exposing it on the
 internet means anyone who reaches it could too. Non-negotiables:
 
-1. **Set `BIGDOG_PASSWORD`** to something long and random. The app logs a loud
-   `OPEN` warning if you don't.
+1. **Create the admin account immediately** on first visit (or pre-seed it with
+   `BIGDOG_ADMIN_USER` / `BIGDOG_PASSWORD`). The dashboard requires a login —
+   the first signup claims the admin account, so don't leave it unclaimed on a
+   public URL.
 2. **Always HTTPS.** Caddy enforces this and sets the session cookie `Secure`.
    Don't expose port 4137 directly — only 80/443 via Caddy.
 3. **Start in `hold` send mode** (`BIGDOG_SEND_MODE=hold`, the default) so every

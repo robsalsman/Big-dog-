@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, existsSync } from 'node:fs';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { resolve } from 'node:path';
 import { DATA_DIR } from './config.js';
 import type {
@@ -19,10 +20,42 @@ import type {
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
-const db = new Database(resolve(DATA_DIR, 'bigdog.sqlite'));
-db.pragma('journal_mode = WAL');
+// ── Multi-user: a separate SQLite database per user (full data isolation) ──
+// A request runs inside runWithUser(); store methods use getDb(). With no
+// context (startup, single-user), everything falls back to the 'default' user
+// — which maps to the original bigdog.sqlite, so existing data is preserved.
+type DB = Database.Database;
+const DEFAULT_USER = 'default';
+const conns = new Map<string, DB>();
 
-db.exec(`
+function dbFileFor(userId: string): string {
+  if (userId === DEFAULT_USER) return resolve(DATA_DIR, 'bigdog.sqlite');
+  const dir = resolve(DATA_DIR, 'users');
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  return resolve(dir, `${userId}.sqlite`);
+}
+
+export function openUserDb(userId: string): DB {
+  const cached = conns.get(userId);
+  if (cached) return cached;
+  const d = new Database(dbFileFor(userId));
+  d.pragma('journal_mode = WAL');
+  initSchema(d);
+  conns.set(userId, d);
+  return d;
+}
+
+const als = new AsyncLocalStorage<{ userId: string; db: DB; brain?: unknown }>();
+export function runWithUser<T>(userId: string, fn: () => T): T {
+  return als.run({ userId, db: openUserDb(userId) }, fn);
+}
+export function currentUserId(): string { return als.getStore()?.userId ?? DEFAULT_USER; }
+export function getDb(): DB { return als.getStore()?.db ?? openUserDb(DEFAULT_USER); }
+export function setContextBrain(b: unknown): void { const s = als.getStore(); if (s) s.brain = b; }
+export function currentBrainRaw(): unknown { return als.getStore()?.brain; }
+
+function initSchema(db: DB) {
+  db.exec(`
   CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY,
     accountId TEXT NOT NULL,
@@ -234,11 +267,38 @@ db.exec(`
     if (!cols.some((c) => c.name === 'autoSend')) db.exec('ALTER TABLE sequences ADD COLUMN autoSend INTEGER DEFAULT 0');
   }
 }
+} // end initSchema
+
+// Eagerly open the default user's DB (preserves single-user behavior).
+openUserDb(DEFAULT_USER);
+
+// ── System database: user accounts (shared, not per-user) ─────────────────
+const sysDb = new Database(resolve(DATA_DIR, 'system.sqlite'));
+sysDb.pragma('journal_mode = WAL');
+sysDb.exec(`CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY, username TEXT UNIQUE, email TEXT, passHash TEXT, role TEXT, createdAt TEXT
+);`);
+
+sysDb.exec(`CREATE TABLE IF NOT EXISTS system (key TEXT PRIMARY KEY, value TEXT);`);
+export const systemStore = {
+  get(key: string): string | undefined { return (sysDb.prepare('SELECT value FROM system WHERE key = ?').get(key) as { value: string } | undefined)?.value; },
+  set(key: string, value: string) { sysDb.prepare('INSERT INTO system (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value); },
+};
+
+export interface UserRow { id: string; username: string; email: string; passHash: string; role: string; createdAt: string; }
+export const users = {
+  count(): number { return (sysDb.prepare('SELECT COUNT(*) c FROM users').get() as { c: number }).c; },
+  byUsername(u: string): UserRow | undefined { return sysDb.prepare('SELECT * FROM users WHERE lower(username) = ?').get((u || '').toLowerCase().trim()) as UserRow | undefined; },
+  byId(id: string): UserRow | undefined { return sysDb.prepare('SELECT * FROM users WHERE id = ?').get(id) as UserRow | undefined; },
+  all(): UserRow[] { return sysDb.prepare('SELECT * FROM users ORDER BY createdAt ASC').all() as UserRow[]; },
+  create(u: UserRow) { sysDb.prepare('INSERT INTO users (id, username, email, passHash, role, createdAt) VALUES (@id, @username, @email, @passHash, @role, @createdAt)').run(u); },
+  setPass(id: string, passHash: string) { sysDb.prepare('UPDATE users SET passHash = ? WHERE id = ?').run(passHash, id); },
+};
 
 // ── Messages ────────────────────────────────────────────────────────────
 export const messages = {
   upsert(m: Message) {
-    db.prepare(
+    getDb().prepare(
       `INSERT INTO messages (id, accountId, messageId, threadId, fromName, fromEmail,
         toEmails, subject, snippet, body, date, folder, unread, dealId, priority, summary, analyzed)
        VALUES (@id, @accountId, @messageId, @threadId, @fromName, @fromEmail,
@@ -247,57 +307,57 @@ export const messages = {
     ).run(m);
   },
   exists(id: string): boolean {
-    return !!db.prepare('SELECT 1 FROM messages WHERE id = ?').get(id);
+    return !!getDb().prepare('SELECT 1 FROM messages WHERE id = ?').get(id);
   },
   get(id: string): Message | undefined {
-    return db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as Message | undefined;
+    return getDb().prepare('SELECT * FROM messages WHERE id = ?').get(id) as Message | undefined;
   },
   recent(limit = 100): Message[] {
     // The main feed is received mail; sent mail still appears inside threads,
     // and dismissed (archived) messages are hidden.
-    return db.prepare("SELECT * FROM messages WHERE (folder IS NULL OR folder != 'SENT') AND (archived IS NULL OR archived = 0) ORDER BY date DESC LIMIT ?").all(limit) as Message[];
+    return getDb().prepare("SELECT * FROM messages WHERE (folder IS NULL OR folder != 'SENT') AND (archived IS NULL OR archived = 0) ORDER BY date DESC LIMIT ?").all(limit) as Message[];
   },
   meetingRequests(limit = 50): Message[] {
-    return db.prepare("SELECT * FROM messages WHERE meetingReq = 1 AND (archived IS NULL OR archived = 0) AND (folder IS NULL OR folder != 'SENT') ORDER BY date DESC LIMIT ?").all(limit) as Message[];
+    return getDb().prepare("SELECT * FROM messages WHERE meetingReq = 1 AND (archived IS NULL OR archived = 0) AND (folder IS NULL OR folder != 'SENT') ORDER BY date DESC LIMIT ?").all(limit) as Message[];
   },
   setMeetingReq(id: string, val: 0 | 1) {
-    db.prepare('UPDATE messages SET meetingReq = ? WHERE id = ?').run(val, id);
+    getDb().prepare('UPDATE messages SET meetingReq = ? WHERE id = ?').run(val, id);
   },
   forContact(email: string, limit = 100): Message[] {
     const e = (email || '').toLowerCase().trim();
-    return db.prepare('SELECT * FROM messages WHERE lower(fromEmail) = ? OR lower(toEmails) LIKE ? ORDER BY date DESC LIMIT ?').all(e, `%${e}%`, limit) as Message[];
+    return getDb().prepare('SELECT * FROM messages WHERE lower(fromEmail) = ? OR lower(toEmails) LIKE ? ORDER BY date DESC LIMIT ?').all(e, `%${e}%`, limit) as Message[];
   },
   archive(id: string) {
-    db.prepare('UPDATE messages SET archived = 1 WHERE id = ?').run(id);
+    getDb().prepare('UPDATE messages SET archived = 1 WHERE id = ?').run(id);
   },
   unarchive(id: string) {
-    db.prepare('UPDATE messages SET archived = 0 WHERE id = ?').run(id);
+    getDb().prepare('UPDATE messages SET archived = 0 WHERE id = ?').run(id);
   },
   recentSent(limit = 100): Message[] {
-    return db.prepare("SELECT * FROM messages WHERE folder = 'SENT' ORDER BY date DESC LIMIT ?").all(limit) as Message[];
+    return getDb().prepare("SELECT * FROM messages WHERE folder = 'SENT' ORDER BY date DESC LIMIT ?").all(limit) as Message[];
   },
   thread(threadId: string): Message[] {
-    return db.prepare('SELECT * FROM messages WHERE threadId = ? ORDER BY date ASC').all(threadId) as Message[];
+    return getDb().prepare('SELECT * FROM messages WHERE threadId = ? ORDER BY date ASC').all(threadId) as Message[];
   },
   unanalyzed(limit = 20): Message[] {
-    return db
+    return getDb()
       .prepare('SELECT * FROM messages WHERE analyzed = 0 ORDER BY date DESC LIMIT ?')
       .all(limit) as Message[];
   },
   setAnalysis(id: string, priority: string, summary: string, dealId: string | null, category: string | null = null, meetingReq = 0) {
-    db.prepare(
+    getDb().prepare(
       'UPDATE messages SET analyzed = 1, priority = ?, summary = ?, dealId = ?, category = ?, meetingReq = ? WHERE id = ?',
     ).run(priority, summary, dealId, category, meetingReq, id);
   },
   markRead(id: string) {
-    db.prepare('UPDATE messages SET unread = 0 WHERE id = ?').run(id);
+    getDb().prepare('UPDATE messages SET unread = 0 WHERE id = ?').run(id);
   },
   count(): number {
-    return (db.prepare('SELECT COUNT(*) c FROM messages').get() as { c: number }).c;
+    return (getDb().prepare('SELECT COUNT(*) c FROM messages').get() as { c: number }).c;
   },
   search(q: string, limit = 50): Message[] {
     const like = `%${q}%`;
-    return db
+    return getDb()
       .prepare(
         `SELECT * FROM messages
          WHERE subject LIKE ? OR fromName LIKE ? OR fromEmail LIKE ? OR body LIKE ? OR summary LIKE ?
@@ -310,7 +370,7 @@ export const messages = {
 // ── Deals ───────────────────────────────────────────────────────────────
 export const deals = {
   upsert(d: Deal) {
-    db.prepare(
+    getDb().prepare(
       `INSERT INTO deals (id, title, contactName, contactEmail, company, stage, value,
         notes, nextStep, nextStepDue, createdAt, updatedAt, lastActivity)
        VALUES (@id, @title, @contactName, @contactEmail, @company, @stage, @value,
@@ -323,19 +383,19 @@ export const deals = {
     ).run(d);
   },
   get(id: string): Deal | undefined {
-    return db.prepare('SELECT * FROM deals WHERE id = ?').get(id) as Deal | undefined;
+    return getDb().prepare('SELECT * FROM deals WHERE id = ?').get(id) as Deal | undefined;
   },
   findByContact(email: string): Deal | undefined {
-    return db
+    return getDb()
       .prepare('SELECT * FROM deals WHERE lower(contactEmail) = lower(?) AND stage NOT IN (?, ?)')
       .get(email, 'won', 'lost') as Deal | undefined;
   },
   all(): Deal[] {
-    return db.prepare('SELECT * FROM deals ORDER BY updatedAt DESC').all() as Deal[];
+    return getDb().prepare('SELECT * FROM deals ORDER BY updatedAt DESC').all() as Deal[];
   },
   search(q: string, limit = 30): Deal[] {
     const like = `%${q}%`;
-    return db
+    return getDb()
       .prepare(
         `SELECT * FROM deals
          WHERE title LIKE ? OR company LIKE ? OR contactName LIKE ? OR contactEmail LIKE ? OR nextStep LIKE ?
@@ -344,7 +404,7 @@ export const deals = {
       .all(like, like, like, like, like, limit) as Deal[];
   },
   setStage(id: string, stage: DealStage) {
-    db.prepare('UPDATE deals SET stage = ?, updatedAt = ? WHERE id = ?').run(
+    getDb().prepare('UPDATE deals SET stage = ?, updatedAt = ? WHERE id = ?').run(
       stage,
       new Date().toISOString(),
       id,
@@ -355,7 +415,7 @@ export const deals = {
 // ── Calendar ────────────────────────────────────────────────────────────
 export const events = {
   upsert(e: CalendarEvent) {
-    db.prepare(
+    getDb().prepare(
       `INSERT INTO events (id, title, start, end, location, attendees, notes, dealId, source, zoomMeetingId)
        VALUES (@id, @title, @start, @end, @location, @attendees, @notes, @dealId, @source, @zoomMeetingId)
        ON CONFLICT(id) DO UPDATE SET
@@ -364,13 +424,13 @@ export const events = {
     ).run({ ...e, zoomMeetingId: e.zoomMeetingId ?? null });
   },
   get(id: string): CalendarEvent | undefined {
-    return db.prepare('SELECT * FROM events WHERE id = ?').get(id) as CalendarEvent | undefined;
+    return getDb().prepare('SELECT * FROM events WHERE id = ?').get(id) as CalendarEvent | undefined;
   },
   all(): CalendarEvent[] {
-    return db.prepare('SELECT * FROM events ORDER BY start ASC').all() as CalendarEvent[];
+    return getDb().prepare('SELECT * FROM events ORDER BY start ASC').all() as CalendarEvent[];
   },
   upcoming(): CalendarEvent[] {
-    return db
+    return getDb()
       .prepare('SELECT * FROM events WHERE start >= ? ORDER BY start ASC')
       .all(new Date().toISOString()) as CalendarEvent[];
   },
@@ -379,63 +439,63 @@ export const events = {
 // ── Drafts ──────────────────────────────────────────────────────────────
 export const drafts = {
   insert(d: Draft) {
-    db.prepare(
+    getDb().prepare(
       `INSERT INTO drafts (id, accountId, inReplyTo, dealId, toEmails, ccEmails, attachmentIds, subject, body, rationale, status, createdAt, sentAt, sendAt)
        VALUES (@id, @accountId, @inReplyTo, @dealId, @toEmails, @ccEmails, @attachmentIds, @subject, @body, @rationale, @status, @createdAt, @sentAt, @sendAt)`,
     ).run({ ...d, ccEmails: d.ccEmails ?? null, attachmentIds: d.attachmentIds ?? null, sendAt: d.sendAt ?? null });
   },
   setSendAt(id: string, sendAt: string | null) {
-    db.prepare('UPDATE drafts SET sendAt = ? WHERE id = ?').run(sendAt, id);
+    getDb().prepare('UPDATE drafts SET sendAt = ? WHERE id = ?').run(sendAt, id);
   },
   due(nowIso: string): Draft[] {
-    return db
+    return getDb()
       .prepare("SELECT * FROM drafts WHERE status = 'pending' AND sendAt IS NOT NULL AND sendAt <= ?")
       .all(nowIso) as Draft[];
   },
   get(id: string): Draft | undefined {
-    return db.prepare('SELECT * FROM drafts WHERE id = ?').get(id) as Draft | undefined;
+    return getDb().prepare('SELECT * FROM drafts WHERE id = ?').get(id) as Draft | undefined;
   },
   pending(): Draft[] {
-    return db
+    return getDb()
       .prepare("SELECT * FROM drafts WHERE status = 'pending' ORDER BY createdAt DESC")
       .all() as Draft[];
   },
   recentForDeal(dealId: string, sinceIso: string): Draft[] {
-    return db
+    return getDb()
       .prepare("SELECT * FROM drafts WHERE dealId = ? AND createdAt >= ?")
       .all(dealId, sinceIso) as Draft[];
   },
   existsForMessage(inReplyTo: string): boolean {
-    return !!db
+    return !!getDb()
       .prepare("SELECT 1 FROM drafts WHERE inReplyTo = ? AND status IN ('pending','sent')")
       .get(inReplyTo);
   },
   forMessage(inReplyTo: string): Draft | undefined {
-    return db
+    return getDb()
       .prepare("SELECT * FROM drafts WHERE inReplyTo = ? AND status = 'pending' ORDER BY createdAt DESC LIMIT 1")
       .get(inReplyTo) as Draft | undefined;
   },
   setStatus(id: string, status: Draft['status'], sentAt: string | null = null) {
-    db.prepare('UPDATE drafts SET status = ?, sentAt = ? WHERE id = ?').run(status, sentAt, id);
+    getDb().prepare('UPDATE drafts SET status = ?, sentAt = ? WHERE id = ?').run(status, sentAt, id);
   },
 };
 
 // ── Suppressed senders (do-not-draft list) ───────────────────────────────
 export const suppressed = {
   add(email: string) {
-    db.prepare('INSERT INTO suppressed (email, ts) VALUES (?, ?) ON CONFLICT(email) DO NOTHING').run(
+    getDb().prepare('INSERT INTO suppressed (email, ts) VALUES (?, ?) ON CONFLICT(email) DO NOTHING').run(
       email.toLowerCase().trim(),
       new Date().toISOString(),
     );
   },
   remove(email: string) {
-    db.prepare('DELETE FROM suppressed WHERE email = ?').run(email.toLowerCase().trim());
+    getDb().prepare('DELETE FROM suppressed WHERE email = ?').run(email.toLowerCase().trim());
   },
   has(email: string): boolean {
-    return !!db.prepare('SELECT 1 FROM suppressed WHERE email = ?').get((email || '').toLowerCase().trim());
+    return !!getDb().prepare('SELECT 1 FROM suppressed WHERE email = ?').get((email || '').toLowerCase().trim());
   },
   all(): string[] {
-    return (db.prepare('SELECT email FROM suppressed ORDER BY ts DESC').all() as { email: string }[]).map((r) => r.email);
+    return (getDb().prepare('SELECT email FROM suppressed ORDER BY ts DESC').all() as { email: string }[]).map((r) => r.email);
   },
 };
 
@@ -446,23 +506,23 @@ export const contacts = {
     const e = (email || '').toLowerCase().trim();
     if (!e || !e.includes('@')) return;
     const when = whenIso || new Date().toISOString();
-    const existing = db.prepare('SELECT email, name FROM contacts WHERE email = ?').get(e) as { email: string; name: string } | undefined;
+    const existing = getDb().prepare('SELECT email, name FROM contacts WHERE email = ?').get(e) as { email: string; name: string } | undefined;
     if (existing) {
-      db.prepare('UPDATE contacts SET name = CASE WHEN (name IS NULL OR name = \'\') AND ? <> \'\' THEN ? ELSE name END, lastSeen = ? WHERE email = ?')
+      getDb().prepare('UPDATE contacts SET name = CASE WHEN (name IS NULL OR name = \'\') AND ? <> \'\' THEN ? ELSE name END, lastSeen = ? WHERE email = ?')
         .run(name, name, when, e);
     } else {
-      db.prepare('INSERT INTO contacts (email, name, company, title, phone, notes, tags, firstSeen, lastSeen, updatedAt) VALUES (?, ?, \'\', \'\', \'\', \'\', \'\', ?, ?, ?)')
+      getDb().prepare('INSERT INTO contacts (email, name, company, title, phone, notes, tags, firstSeen, lastSeen, updatedAt) VALUES (?, ?, \'\', \'\', \'\', \'\', \'\', ?, ?, ?)')
         .run(e, name, when, when, when);
     }
   },
   get(email: string): Contact | undefined {
-    return db.prepare('SELECT * FROM contacts WHERE email = ?').get((email || '').toLowerCase().trim()) as Contact | undefined;
+    return getDb().prepare('SELECT * FROM contacts WHERE email = ?').get((email || '').toLowerCase().trim()) as Contact | undefined;
   },
   save(c: Partial<Contact> & { email: string }) {
     const e = c.email.toLowerCase().trim();
     const cur = this.get(e) ?? { email: e, name: '', company: '', title: '', phone: '', notes: '', tags: '', firstSeen: new Date().toISOString(), lastSeen: new Date().toISOString(), updatedAt: new Date().toISOString() };
     const merged = { ...cur, ...c, email: e, updatedAt: new Date().toISOString() };
-    db.prepare(
+    getDb().prepare(
       `INSERT INTO contacts (email, name, company, title, phone, notes, tags, firstSeen, lastSeen, updatedAt)
        VALUES (@email, @name, @company, @title, @phone, @notes, @tags, @firstSeen, @lastSeen, @updatedAt)
        ON CONFLICT(email) DO UPDATE SET name=@name, company=@company, title=@title, phone=@phone, notes=@notes, tags=@tags, lastSeen=@lastSeen, updatedAt=@updatedAt`,
@@ -470,90 +530,90 @@ export const contacts = {
     return merged as Contact;
   },
   all(limit = 1000): Contact[] {
-    return db.prepare('SELECT * FROM contacts ORDER BY lastSeen DESC LIMIT ?').all(limit) as Contact[];
+    return getDb().prepare('SELECT * FROM contacts ORDER BY lastSeen DESC LIMIT ?').all(limit) as Contact[];
   },
   suggest(q: string, limit = 8): Contact[] {
     const like = `%${q}%`;
-    return db.prepare('SELECT * FROM contacts WHERE email LIKE ? OR name LIKE ? OR company LIKE ? ORDER BY lastSeen DESC LIMIT ?').all(like, like, like, limit) as Contact[];
+    return getDb().prepare('SELECT * FROM contacts WHERE email LIKE ? OR name LIKE ? OR company LIKE ? ORDER BY lastSeen DESC LIMIT ?').all(like, like, like, limit) as Contact[];
   },
 };
 
 // ── Sales repository (attachments Big Dog can send) ──────────────────────
 export const attachments = {
   add(a: Attachment) {
-    db.prepare('INSERT INTO attachments (id, name, mime, size, path, notes, createdAt) VALUES (@id, @name, @mime, @size, @path, @notes, @createdAt)').run(a);
+    getDb().prepare('INSERT INTO attachments (id, name, mime, size, path, notes, createdAt) VALUES (@id, @name, @mime, @size, @path, @notes, @createdAt)').run(a);
   },
   all(): Attachment[] {
-    return db.prepare('SELECT * FROM attachments ORDER BY createdAt DESC').all() as Attachment[];
+    return getDb().prepare('SELECT * FROM attachments ORDER BY createdAt DESC').all() as Attachment[];
   },
   get(id: string): Attachment | undefined {
-    return db.prepare('SELECT * FROM attachments WHERE id = ?').get(id) as Attachment | undefined;
+    return getDb().prepare('SELECT * FROM attachments WHERE id = ?').get(id) as Attachment | undefined;
   },
   delete(id: string) {
-    db.prepare('DELETE FROM attachments WHERE id = ?').run(id);
+    getDb().prepare('DELETE FROM attachments WHERE id = ?').run(id);
   },
 };
 
 // ── Drip sequences + enrollments ─────────────────────────────────────────
 export const sequences = {
   all(): Sequence[] {
-    return (db.prepare('SELECT * FROM sequences ORDER BY createdAt DESC').all() as any[]).map((r) => ({
+    return (getDb().prepare('SELECT * FROM sequences ORDER BY createdAt DESC').all() as any[]).map((r) => ({
       id: r.id, name: r.name, steps: JSON.parse(r.steps || '[]'), active: !!r.active, autoSend: !!r.autoSend, createdAt: r.createdAt,
     }));
   },
   get(id: string): Sequence | undefined {
-    const r = db.prepare('SELECT * FROM sequences WHERE id = ?').get(id) as any;
+    const r = getDb().prepare('SELECT * FROM sequences WHERE id = ?').get(id) as any;
     return r ? { id: r.id, name: r.name, steps: JSON.parse(r.steps || '[]'), active: !!r.active, autoSend: !!r.autoSend, createdAt: r.createdAt } : undefined;
   },
   upsert(s: Sequence) {
-    db.prepare('INSERT INTO sequences (id, name, steps, active, autoSend, createdAt) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, steps=excluded.steps, active=excluded.active, autoSend=excluded.autoSend')
+    getDb().prepare('INSERT INTO sequences (id, name, steps, active, autoSend, createdAt) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, steps=excluded.steps, active=excluded.active, autoSend=excluded.autoSend')
       .run(s.id, s.name, JSON.stringify(s.steps), s.active ? 1 : 0, s.autoSend ? 1 : 0, s.createdAt);
   },
   delete(id: string) {
-    db.prepare('DELETE FROM sequences WHERE id = ?').run(id);
-    db.prepare('DELETE FROM enrollments WHERE sequenceId = ?').run(id);
+    getDb().prepare('DELETE FROM sequences WHERE id = ?').run(id);
+    getDb().prepare('DELETE FROM enrollments WHERE sequenceId = ?').run(id);
   },
 };
 
 export const enrollments = {
   add(e: Enrollment) {
-    db.prepare(`INSERT INTO enrollments (id, sequenceId, email, name, company, accountId, dealId, step, status, startedAt, nextRunAt, lastError)
+    getDb().prepare(`INSERT INTO enrollments (id, sequenceId, email, name, company, accountId, dealId, step, status, startedAt, nextRunAt, lastError)
       VALUES (@id, @sequenceId, @email, @name, @company, @accountId, @dealId, @step, @status, @startedAt, @nextRunAt, @lastError)`).run(e);
   },
   update(e: Enrollment) {
-    db.prepare('UPDATE enrollments SET step=@step, status=@status, nextRunAt=@nextRunAt, lastError=@lastError WHERE id=@id').run(e);
+    getDb().prepare('UPDATE enrollments SET step=@step, status=@status, nextRunAt=@nextRunAt, lastError=@lastError WHERE id=@id').run(e);
   },
   all(): Enrollment[] {
-    return db.prepare('SELECT * FROM enrollments ORDER BY nextRunAt ASC').all() as Enrollment[];
+    return getDb().prepare('SELECT * FROM enrollments ORDER BY nextRunAt ASC').all() as Enrollment[];
   },
   due(nowIso: string): Enrollment[] {
-    return db.prepare("SELECT * FROM enrollments WHERE status = 'active' AND nextRunAt <= ? ORDER BY nextRunAt ASC LIMIT 50").all(nowIso) as Enrollment[];
+    return getDb().prepare("SELECT * FROM enrollments WHERE status = 'active' AND nextRunAt <= ? ORDER BY nextRunAt ASC LIMIT 50").all(nowIso) as Enrollment[];
   },
   activeForEmail(email: string): Enrollment[] {
-    return db.prepare("SELECT * FROM enrollments WHERE lower(email) = ? AND status = 'active'").all((email || '').toLowerCase().trim()) as Enrollment[];
+    return getDb().prepare("SELECT * FROM enrollments WHERE lower(email) = ? AND status = 'active'").all((email || '').toLowerCase().trim()) as Enrollment[];
   },
   existsActive(sequenceId: string, email: string): boolean {
-    return !!db.prepare("SELECT 1 FROM enrollments WHERE sequenceId = ? AND lower(email) = ? AND status = 'active'").get(sequenceId, (email || '').toLowerCase().trim());
+    return !!getDb().prepare("SELECT 1 FROM enrollments WHERE sequenceId = ? AND lower(email) = ? AND status = 'active'").get(sequenceId, (email || '').toLowerCase().trim());
   },
 };
 
 // ── Digests ─────────────────────────────────────────────────────────────
 export const digests = {
   upsert(d: Digest) {
-    db.prepare(
+    getDb().prepare(
       `INSERT INTO digests (id, date, content, createdAt) VALUES (@id, @date, @content, @createdAt)
        ON CONFLICT(id) DO UPDATE SET content=excluded.content, createdAt=excluded.createdAt`,
     ).run(d);
   },
   latest(): Digest | undefined {
-    return db.prepare('SELECT * FROM digests ORDER BY date DESC LIMIT 1').get() as Digest | undefined;
+    return getDb().prepare('SELECT * FROM digests ORDER BY date DESC LIMIT 1').get() as Digest | undefined;
   },
 };
 
 // ── Memories (long-term relationship context per contact) ────────────────
 export const memories = {
   add(contactEmail: string, content: string) {
-    db.prepare('INSERT INTO memories (id, contactEmail, content, createdAt) VALUES (?, ?, ?, ?)').run(
+    getDb().prepare('INSERT INTO memories (id, contactEmail, content, createdAt) VALUES (?, ?, ?, ?)').run(
       randomUUID().slice(0, 16),
       contactEmail.toLowerCase(),
       content,
@@ -561,7 +621,7 @@ export const memories = {
     );
   },
   forContact(contactEmail: string, limit = 12): { content: string; createdAt: string }[] {
-    return db
+    return getDb()
       .prepare('SELECT content, createdAt FROM memories WHERE contactEmail = ? ORDER BY createdAt DESC LIMIT ?')
       .all(contactEmail.toLowerCase(), limit) as { content: string; createdAt: string }[];
   },
@@ -572,7 +632,7 @@ export const memories = {
     return rows.map((r) => `- ${r.content} (${r.createdAt.slice(0, 10)})`).join('\n');
   },
   count(): number {
-    return (db.prepare('SELECT COUNT(*) c FROM memories').get() as { c: number }).c;
+    return (getDb().prepare('SELECT COUNT(*) c FROM memories').get() as { c: number }).c;
   },
 };
 
@@ -587,10 +647,10 @@ export interface DomainPattern {
 
 export const patterns = {
   get(domain: string): DomainPattern | undefined {
-    return db.prepare('SELECT * FROM patterns WHERE domain = ?').get(domain.toLowerCase()) as DomainPattern | undefined;
+    return getDb().prepare('SELECT * FROM patterns WHERE domain = ?').get(domain.toLowerCase()) as DomainPattern | undefined;
   },
   set(domain: string, patternKey: string, sample: string, source: string) {
-    db.prepare(
+    getDb().prepare(
       `INSERT INTO patterns (domain, patternKey, sample, source, updatedAt) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(domain) DO UPDATE SET patternKey=excluded.patternKey, sample=excluded.sample, source=excluded.source, updatedAt=excluded.updatedAt`,
     ).run(domain.toLowerCase(), patternKey, sample, source, new Date().toISOString());
@@ -600,16 +660,16 @@ export const patterns = {
 // ── Settings (runtime config: provider + keys, set from the dashboard) ───
 export const settingsStore = {
   get(key: string): string | undefined {
-    const r = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
+    const r = getDb().prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
     return r?.value;
   },
   set(key: string, value: string) {
-    db.prepare(
+    getDb().prepare(
       'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
     ).run(key, value);
   },
   all(): Record<string, string> {
-    const rows = db.prepare('SELECT key, value FROM settings').all() as { key: string; value: string }[];
+    const rows = getDb().prepare('SELECT key, value FROM settings').all() as { key: string; value: string }[];
     const out: Record<string, string> = {};
     for (const r of rows) out[r.key] = r.value;
     return out;
@@ -624,28 +684,28 @@ export interface ActivityEntry {
 }
 export const activity = {
   add(type: string, message: string) {
-    db.prepare('INSERT INTO activity (ts, type, message) VALUES (?, ?, ?)').run(new Date().toISOString(), type, message);
-    db.prepare('DELETE FROM activity WHERE id NOT IN (SELECT id FROM activity ORDER BY id DESC LIMIT 500)').run();
+    getDb().prepare('INSERT INTO activity (ts, type, message) VALUES (?, ?, ?)').run(new Date().toISOString(), type, message);
+    getDb().prepare('DELETE FROM activity WHERE id NOT IN (SELECT id FROM activity ORDER BY id DESC LIMIT 500)').run();
   },
   recent(limit = 100): ActivityEntry[] {
-    return db.prepare('SELECT ts, type, message FROM activity ORDER BY id DESC LIMIT ?').all(limit) as ActivityEntry[];
+    return getDb().prepare('SELECT ts, type, message FROM activity ORDER BY id DESC LIMIT ?').all(limit) as ActivityEntry[];
   },
 };
 
 // ── Mail accounts added in-app (file accounts live in config/accounts.json) ─
 export const mailAccountsStore = {
   all(): Account[] {
-    const rows = db.prepare('SELECT json FROM mailaccounts').all() as { json: string }[];
+    const rows = getDb().prepare('SELECT json FROM mailaccounts').all() as { json: string }[];
     return rows.map((r) => JSON.parse(r.json) as Account);
   },
   set(account: Account) {
-    db.prepare('INSERT INTO mailaccounts (id, json) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(
+    getDb().prepare('INSERT INTO mailaccounts (id, json) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(
       account.id,
       JSON.stringify(account),
     );
   },
   delete(id: string) {
-    db.prepare('DELETE FROM mailaccounts WHERE id = ?').run(id);
+    getDb().prepare('DELETE FROM mailaccounts WHERE id = ?').run(id);
   },
 };
 
@@ -653,4 +713,3 @@ export function isEmpty(): boolean {
   return messages.count() === 0 && deals.all().length === 0;
 }
 
-export default db;

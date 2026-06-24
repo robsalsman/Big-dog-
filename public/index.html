@@ -66,10 +66,16 @@
       <div class="login-box">
         <div class="logo" style="font-size:46px">🐕</div>
         <h2 id="login-title">What's up, Big Dog!?</h2>
-        <p class="muted small" id="login-sub">Enter your password to continue.</p>
-        <input id="login-pw" type="password" placeholder="Password" />
-        <button class="btn primary" onclick="doLogin()">Log in</button>
+        <p class="muted small" id="login-sub">Log in to continue.</p>
+        <input id="login-user" type="text" autocomplete="username" placeholder="Username" />
+        <input id="login-email" type="email" autocomplete="email" placeholder="Email (optional)" style="display:none" />
+        <input id="login-pw" type="password" autocomplete="current-password" placeholder="Password" />
+        <button id="login-btn" class="btn primary" onclick="doLogin()">Log in</button>
         <div id="login-err" class="muted small" style="color:var(--hot);margin-top:8px"></div>
+        <div class="muted small" style="margin-top:10px">
+          <span id="login-toggle-q">Need an account?</span>
+          <a href="#" id="login-toggle" onclick="toggleSignup(event)" style="color:var(--accent)">Create one</a>
+        </div>
       </div>
     </div>
 

@@ -21,10 +21,29 @@ async function api(path, opts = {}) {
   return res.json();
 }
 
-function showLogin() {
+let signupMode = false;
+function showLogin(opts = {}) {
+  // If the server has no accounts yet, force signup mode (first user = admin).
+  if (opts.hasAccounts === false) { signupMode = true; }
+  applySignupMode();
   $('#login').style.display = 'flex';
-  setTimeout(() => $('#login-pw')?.focus(), 50);
+  setTimeout(() => $('#login-user')?.focus(), 50);
 }
+function applySignupMode() {
+  $('#login-email').style.display = signupMode ? '' : 'none';
+  $('#login-pw').setAttribute('autocomplete', signupMode ? 'new-password' : 'current-password');
+  $('#login-title').textContent = signupMode ? 'Create your Big Dog account' : "What's up, Big Dog!?";
+  $('#login-sub').textContent = signupMode ? 'Pick a username and password.' : 'Log in to continue.';
+  $('#login-btn').textContent = signupMode ? 'Create account' : 'Log in';
+  $('#login-toggle-q').textContent = signupMode ? 'Already have an account?' : 'Need an account?';
+  $('#login-toggle').textContent = signupMode ? 'Log in' : 'Create one';
+}
+window.toggleSignup = (e) => {
+  if (e) e.preventDefault();
+  signupMode = !signupMode;
+  applySignupMode();
+  $('#login-err').textContent = '';
+};
 // Email-verification badge from a status string or a deal-notes token.
 function verifyBadge(status) {
   if (!status) return '';
@@ -43,7 +62,7 @@ function setupStatusCard() {
   const rows = [
     { k: 'claude', label: 'Claude (the brain)', req: true, hint: 'Backend → Save & connect' },
     { k: 'mailbox', label: 'Mailbox', req: true, hint: 'Mailboxes → Auto-detect' },
-    { k: 'password', label: 'Dashboard password', req: true, hint: 'Security' },
+    { k: 'password', label: 'Account login', req: true, hint: 'Your account' },
     { k: 'verify', label: 'Email verification', req: false, hint: 'Email verification' },
     { k: 'zoom', label: 'Zoom (meetings + transcripts)', req: false, hint: 'Video meetings' },
     { k: 'twilio', label: 'Twilio (text/call)', req: false, hint: 'Text & calls' },
@@ -66,10 +85,18 @@ function setupStatusCard() {
   </div>`;
 }
 window.doLogin = async () => {
+  const username = $('#login-user').value.trim();
+  const password = $('#login-pw').value;
+  const email = $('#login-email').value.trim();
   try {
-    await api('/api/auth/login', { method: 'POST', body: { password: $('#login-pw').value } });
+    if (signupMode) {
+      await api('/api/auth/signup', { method: 'POST', body: { username, password, email } });
+    } else {
+      await api('/api/auth/login', { method: 'POST', body: { username, password } });
+    }
     $('#login').style.display = 'none';
     $('#login-err').textContent = '';
+    signupMode = false;
     boot();
   } catch (e) { $('#login-err').textContent = e.message; }
 };
@@ -123,7 +150,9 @@ function md(text = '') {
 // ── Data load ────────────────────────────────────────────────────────────
 async function load() {
   state = await api('/api/state');
-  $('#tagline').textContent = `What's up, ${state.owner.name}!?`;
+  const who = (state.user && state.user.username) || state.owner.name;
+  $('#tagline').textContent = `What's up, ${who}!?`;
+  if (state.user) $('#logout-btn').style.display = '';
   const pill = $('#brain-pill');
   pill.textContent = state.brainLive ? `brain: ${state.backend}` : 'brain: offline';
   pill.className = 'pill ' + (state.brainLive ? 'live' : 'offline');
@@ -1414,12 +1443,11 @@ async function renderSettings() {
     </div>
 
     <div class="card" style="margin-top:22px">
-      <strong>🔒 Security</strong>
+      <strong>🔒 Your account</strong>
       <div class="muted small" id="auth-state" style="margin:4px 0 8px">Checking…</div>
-      <input class="subj" id="pw-current" type="password" placeholder="Current password (only when changing)" />
       <input class="subj" id="pw-new" type="password" placeholder="New password (min 6 chars)" />
       <div class="actions">
-        <button class="btn primary" onclick="setDashboardPassword()">Set password</button>
+        <button class="btn primary" onclick="setDashboardPassword()">Change password</button>
         <span id="pw-status" class="muted small"></span>
       </div>
     </div>`;
@@ -1466,10 +1494,10 @@ async function renderSettings() {
       </div>
     </div>`;
 
-  api('/api/auth/status').then((st) => {
-    $('#auth-state') && ($('#auth-state').textContent = st.required
-      ? 'A dashboard password is set. Anyone must log in.'
-      : '⚠ No password set — the dashboard is open to anyone who can reach it. Set one below.');
+  api('/api/state').then((s) => {
+    const who = (s.user && s.user.username) ? s.user.username : 'you';
+    const role = (s.user && s.user.role === 'admin') ? ' (admin)' : '';
+    $('#auth-state') && ($('#auth-state').textContent = `Signed in as ${who}${role}. Your inbox, contacts, and deals are private to your account.`);
   }).catch(() => {});
   loadMailboxes();
   loadProfile();
@@ -1610,14 +1638,12 @@ window.removeMailbox = async (id) => {
 
 window.setDashboardPassword = async () => {
   const password = $('#pw-new').value;
-  const current = $('#pw-current').value;
   if (!password || password.length < 6) { $('#pw-status').textContent = 'Min 6 characters.'; return; }
   try {
-    await api('/api/auth/password', { method: 'POST', body: { password, current } });
-    $('#pw-status').textContent = '✅ Password set — you are logged in.';
-    $('#pw-new').value = ''; $('#pw-current').value = '';
-    $('#logout-btn').style.display = '';
-    toast('Dashboard password set. 🔒');
+    await api('/api/auth/password', { method: 'POST', body: { password } });
+    $('#pw-status').textContent = '✅ Password changed.';
+    $('#pw-new').value = '';
+    toast('Password changed. 🔒');
   } catch (e) { $('#pw-status').textContent = 'Error: ' + e.message; }
 };
 
@@ -1827,13 +1853,14 @@ $('#sync-btn').addEventListener('click', async () => {
 });
 
 // ── Boot ─────────────────────────────────────────────────────────────────
-$('#login-pw') && $('#login-pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+['#login-pw', '#login-user', '#login-email'].forEach((sel) =>
+  $(sel) && $(sel).addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); }));
 
 async function boot() {
-  let st = { required: false, authed: true };
+  let st = { required: true, authed: false, hasAccounts: true };
   try { st = await api('/api/auth/status'); } catch { /* ignore */ }
-  $('#logout-btn').style.display = st.required && st.authed ? '' : 'none';
-  if (st.required && !st.authed) { showLogin(); return; }
+  $('#logout-btn').style.display = st.authed ? '' : 'none';
+  if (!st.authed) { showLogin({ hasAccounts: st.hasAccounts }); return; }
   $('#login').style.display = 'none';
   load().catch((e) => toast('Failed to load: ' + e.message));
 }
