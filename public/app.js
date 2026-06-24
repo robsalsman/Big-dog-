@@ -590,38 +590,75 @@ window.moveDeal = async (id, stage) => {
 };
 
 // ── Calendar ─────────────────────────────────────────────────────────────
+let calMonth = null; // first day of the displayed month
+function ymdLocal(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+function fmtTime(iso) { return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
 function renderCalendar() {
   const el = $('#calendar');
-  const evts = [...state.events].sort((a, b) => a.start.localeCompare(b.start));
-  const list = evts.length
-    ? evts
-        .map(
-          (e) => `
-      <div class="card">
-        <div class="evt">
-          <div class="when">${fmtDate(e.start)}</div>
-          <div>
-            <strong>${esc(e.title)}</strong>
-            <div class="muted small">${esc(e.location)} ${e.attendees ? '· ' + esc(e.attendees) : ''}</div>
-            ${e.notes ? `<div class="muted small">${esc(e.notes)}</div>` : ''}
-          </div>
-        </div>
-      </div>`,
-        )
-        .join('')
-    : '<div class="empty">Nothing scheduled. Meeting requests land here automatically.</div>';
+  if (!calMonth) { const n = new Date(); calMonth = new Date(n.getFullYear(), n.getMonth(), 1); }
+  const year = calMonth.getFullYear(), month = calMonth.getMonth();
+  const startDow = new Date(year, month, 1).getDay();
+  const gridStart = new Date(year, month, 1 - startDow);
+
+  const byDay = {};
+  for (const e of state.events) { const key = ymdLocal(new Date(e.start)); (byDay[key] = byDay[key] || []).push(e); }
+  for (const k in byDay) byDay[k].sort((a, b) => a.start.localeCompare(b.start));
+  const todayKey = ymdLocal(new Date());
+  const monthName = calMonth.toLocaleString('default', { month: 'long', year: 'numeric' });
+  const dows = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  let cells = '';
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i);
+    const key = ymdLocal(d);
+    const evs = byDay[key] || [];
+    const cls = 'cal-cell' + (d.getMonth() === month ? '' : ' cal-out') + (key === todayKey ? ' cal-today' : '');
+    cells += `<div class="${cls}" onclick="showDay('${key}')">
+      <div class="cal-num">${d.getDate()}</div>
+      ${evs.slice(0, 3).map((e) => `<div class="cal-evt" title="${esc(e.title)}">${fmtTime(e.start)} ${esc(e.title)}</div>`).join('')}
+      ${evs.length > 3 ? `<div class="cal-more">+${evs.length - 3} more</div>` : ''}
+    </div>`;
+  }
+
   const cal = state.calcom || {};
   const calBtns = [
     cal.bookingUrl ? `<a class="btn small primary" href="${esc(cal.bookingUrl)}" target="_blank">📅 Book a call</a>` : '',
     cal.configured ? `<button class="btn small" onclick="syncCalcom()">↻ Sync Cal.com</button>` : '',
     `<a class="btn small" href="/calendar.ics">⬇ Subscribe (.ics)</a>`,
   ].join(' ');
+
   el.innerHTML = `
-    <div class="row" style="margin-bottom:14px">
-      <h2>One calendar${cal.configured ? ' <span class="muted small">· Cal.com connected</span>' : ''}</h2>
+    <div class="row" style="margin-bottom:12px;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn small" onclick="calNav(-1)">‹</button>
+        <h2 style="margin:0;min-width:210px;text-align:center">${monthName}</h2>
+        <button class="btn small" onclick="calNav(1)">›</button>
+        <button class="btn small ghost" onclick="calToday()">Today</button>
+      </div>
       <div>${calBtns}</div>
-    </div>${list}`;
+    </div>
+    <div class="cal-grid cal-head">${dows.map((d) => `<div class="cal-dow">${d}</div>`).join('')}</div>
+    <div class="cal-grid">${cells}</div>
+    <div id="cal-day"></div>`;
 }
+window.calNav = (delta) => { calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + delta, 1); renderCalendar(); };
+window.calToday = () => { const n = new Date(); calMonth = new Date(n.getFullYear(), n.getMonth(), 1); renderCalendar(); showDay(ymdLocal(n)); };
+window.showDay = (key) => {
+  const evs = state.events.filter((e) => ymdLocal(new Date(e.start)) === key).sort((a, b) => a.start.localeCompare(b.start));
+  const slot = $('#cal-day'); if (!slot) return;
+  const dt = new Date(key + 'T00:00:00');
+  slot.innerHTML = `<div class="card" style="margin-top:14px">
+    <div class="row"><strong>${dt.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</strong>
+      <button class="btn small primary" onclick="openCompose()">📅 New meeting</button></div>
+    ${evs.length ? evs.map((e) => `
+      <div class="evt" style="margin-top:10px">
+        <div class="when">${fmtTime(e.start)}</div>
+        <div><strong>${esc(e.title)}</strong>
+          <div class="muted small">${esc(e.location || '')} ${e.attendees ? '· ' + esc(e.attendees) : ''}</div>
+          ${e.notes ? `<div class="muted small">${esc(e.notes)}</div>` : ''}</div>
+      </div>`).join('') : '<div class="muted small" style="margin-top:8px">No meetings this day.</div>'}
+  </div>`;
+};
 
 window.syncCalcom = async () => {
   try { const r = await api('/api/calcom/sync', { method: 'POST' }); await load(); switchTab('calendar'); toast(`Pulled ${r.bookings} Cal.com booking(s).`); }
