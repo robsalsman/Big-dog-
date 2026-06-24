@@ -83,6 +83,14 @@ later from the **⚙ Settings** tab in the dashboard — no redeploy needed.
 > lead research. It's on by default. To build a slimmer image without it:
 > `docker compose build --build-arg WITH_BROWSER=false` (or set `BIGDOG_BROWSER=off`).
 
+> **Voice (Kokoro, included):** the compose file runs a `kokoro` TTS service so
+> Big Dog's phone calls have a real voice out of the box (built-in voices, CPU,
+> ~1.5GB image + a one-time model download). Wants ~2GB+ RAM free. To skip it,
+> comment out the `kokoro` service and the `VOICE_*` env on `bigdog` in
+> `docker-compose.yml` — calls fall back to Twilio's built-in TTS. To use your
+> **cloned** voice instead, run a Chatterbox server and point ⚙ Settings →
+> Voice at it.
+
 > Mailboxes: drop your real `config/accounts.json` on the server (it's gitignored
 > and never committed), or just add mailboxes in ⚙ Settings after first launch.
 

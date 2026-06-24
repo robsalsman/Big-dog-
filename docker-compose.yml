@@ -3,6 +3,10 @@
 #
 # - `bigdog`  runs the app (port 4137, internal only).
 # - `caddy`   terminates TLS on 80/443 and reverse-proxies to bigdog.
+# - `kokoro`  open-source TTS (Kokoro, OpenAI-compatible) so Big Dog's calls
+#             have a real voice out of the box. CPU image; ~1.5GB, downloads a
+#             model on first start. To skip it, comment out the service + the
+#             VOICE_* env on bigdog (calls fall back to Twilio's built-in TTS).
 #
 # Persists across restarts: ./data (mail cache, deals, calendar SQLite),
 # ./config (your accounts.json), and Caddy's certificates.
@@ -10,11 +14,19 @@ services:
   bigdog:
     build: .
     restart: unless-stopped
+    depends_on:
+      - kokoro
     env_file:
       - .env
     environment:
       - NODE_ENV=production
       - PORT=4137
+      # Voice out of the box via the bundled Kokoro service. Override anytime in
+      # ⚙ Settings (e.g. point at a Chatterbox server to use your cloned voice).
+      - VOICE_PROVIDER=openai
+      - VOICE_BASE_URL=http://kokoro:8880/v1
+      - VOICE_MODEL=kokoro
+      - VOICE_NAME=af_heart
     volumes:
       - ./data:/app/data
       - ./config:/app/config
@@ -26,6 +38,12 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    restart: unless-stopped
+    expose:
+      - "8880"
 
   caddy:
     image: caddy:2
