@@ -1464,3 +1464,44 @@ async function boot() {
   load().catch((e) => toast('Failed to load: ' + e.message));
 }
 boot();
+
+// ── Voice dictation: a mic that follows the focused text field ────────────
+(function setupDictation() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return; // not supported (use Chrome/Edge)
+  const btn = document.createElement('button');
+  btn.className = 'float-mic'; btn.type = 'button'; btn.textContent = '🎤'; btn.title = 'Click to dictate';
+  document.body.appendChild(btn);
+  let field = null, rec = null;
+
+  const isText = (el) => el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && /^(text|search|email|url|tel|number|password|)$/i.test(el.getAttribute('type') || 'text')));
+  function place() {
+    if (!field) return;
+    const r = field.getBoundingClientRect();
+    if (r.width === 0) { btn.style.display = 'none'; return; }
+    btn.style.top = (r.top + 5) + 'px';
+    btn.style.left = (r.right - 34) + 'px';
+  }
+  document.addEventListener('focusin', (e) => { if (isText(e.target)) { field = e.target; place(); btn.style.display = 'flex'; } });
+  document.addEventListener('focusout', () => { setTimeout(() => { if (document.activeElement !== btn && !isText(document.activeElement)) { btn.style.display = 'none'; if (rec) { rec.stop(); } } }, 150); });
+  window.addEventListener('scroll', place, true);
+  window.addEventListener('resize', place);
+
+  btn.addEventListener('mousedown', (e) => e.preventDefault()); // keep field focus
+  btn.addEventListener('click', () => {
+    if (rec) { rec.stop(); return; }
+    if (!field) return;
+    const r = new SR(); rec = r; r.lang = 'en-US'; r.interimResults = true; r.continuous = true;
+    const base = field.value ? field.value.replace(/\s*$/, '') + ' ' : '';
+    btn.classList.add('rec');
+    r.onresult = (ev) => {
+      let txt = '';
+      for (let i = ev.resultIndex; i < ev.results.length; i++) txt += ev.results[i][0].transcript;
+      field.value = base + txt;
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    r.onerror = () => { btn.classList.remove('rec'); rec = null; };
+    r.onend = () => { btn.classList.remove('rec'); rec = null; };
+    try { r.start(); } catch { btn.classList.remove('rec'); rec = null; }
+  });
+})();
