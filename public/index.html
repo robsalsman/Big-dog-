@@ -113,6 +113,25 @@
       </div>
     </div>
 
+    <div id="callmodal" class="login-overlay" style="display:none">
+      <div class="login-box" style="max-width:520px;width:92%;text-align:left">
+        <div class="row" style="align-items:center">
+          <h2 style="margin:0">📞 Call <span id="call-who"></span></h2>
+          <button class="btn ghost" onclick="closeCall()">✕</button>
+        </div>
+        <input id="call-to" class="subj" placeholder="Phone (+1…)" style="width:100%;margin-top:10px" />
+        <textarea id="call-msg" class="edit" style="width:100%;min-height:120px" placeholder="What Big Dog says when they pick up — or hit ✨ Draft"></textarea>
+        <div class="actions" style="margin-top:8px;flex-wrap:wrap">
+          <button class="btn" onclick="draftCall(false)">✨ Draft script</button>
+          <button class="btn" onclick="draftCall(true)">✨ Draft voicemail</button>
+          <button class="btn good" onclick="placeCall(false)">📞 Call now</button>
+          <button class="btn primary" onclick="placeCall(true)">📪 Leave voicemail</button>
+          <span id="call-status" class="muted small"></span>
+        </div>
+        <div class="muted small" style="margin-top:6px">Big Dog dials through Twilio and speaks in your chosen voice (Settings → 🗣️ Voice).</div>
+      </div>
+    </div>
+
     <script src="/app.js"></script>
   </body>
 </html>

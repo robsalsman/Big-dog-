@@ -544,7 +544,7 @@ window.openContact = async (email) => {
           <div style="white-space:nowrap">
             <button class="btn small primary" onclick="openCompose('${esc(c.email)}')">✏️ Email</button>
             ${(state.twilio && state.twilio.configured && c.phone) ? `<button class="btn small" onclick="textContact('${esc(c.phone)}','${esc(c.name || '')}')">💬 Text</button>
-            <button class="btn small" onclick="callContact('${esc(c.phone)}')">📞 Call</button>` : ''}
+            <button class="btn small" onclick="callContact('${esc(c.phone)}','${esc(c.name || '')}','${esc(c.company || '')}')">📞 Call</button>` : ''}
           </div></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
           <input class="subj" id="ct-name" placeholder="Name" value="${esc(c.name || '')}" />
@@ -570,11 +570,35 @@ window.textContact = async (phone, name) => {
   try { await api('/api/sms', { method: 'POST', body: { to: phone, body: msg } }); toast('Text sent. 🐕'); }
   catch (e) { toast('Error: ' + e.message); }
 };
-window.callContact = async (phone) => {
-  const msg = prompt('What should Big Dog say when they pick up?', 'Hi, this is Big Dog calling on behalf of Skynet Defense. ');
-  if (!msg) return;
-  try { await api('/api/call', { method: 'POST', body: { to: phone, message: msg } }); toast('Calling… 📞'); }
-  catch (e) { toast('Error: ' + e.message); }
+let callCtx = {};
+window.callContact = (phone, name, company) => {
+  callCtx = { phone: phone || '', name: name || '', company: company || '' };
+  $('#call-who').textContent = name || phone || '';
+  $('#call-to').value = phone || '';
+  $('#call-msg').value = '';
+  $('#call-status').textContent = '';
+  $('#callmodal').style.display = 'flex';
+};
+window.closeCall = () => { $('#callmodal').style.display = 'none'; };
+window.draftCall = async (voicemail) => {
+  $('#call-status').textContent = 'Drafting…';
+  try {
+    const r = await api('/api/call/draft', { method: 'POST', body: { name: callCtx.name, company: callCtx.company, voicemail } });
+    $('#call-msg').value = r.script || '';
+    $('#call-status').textContent = '✨ Draft ready — edit if you like.';
+  } catch (e) { $('#call-status').textContent = 'Error: ' + e.message; }
+};
+window.placeCall = async (voicemail) => {
+  const to = $('#call-to').value.trim();
+  const message = $('#call-msg').value.trim();
+  if (!to) { $('#call-status').textContent = 'Enter a phone number.'; return; }
+  if (!message) { $('#call-status').textContent = 'Add what Big Dog should say (or hit ✨ Draft).'; return; }
+  $('#call-status').textContent = voicemail ? 'Dialing for voicemail…' : 'Calling…';
+  try {
+    await api('/api/call', { method: 'POST', body: { to, message, voicemail } });
+    closeCall();
+    toast(voicemail ? 'Leaving voicemail… 📪' : 'Calling… 📞');
+  } catch (e) { $('#call-status').textContent = 'Error: ' + e.message; }
 };
 window.saveContact = async (email) => {
   $('#ct-status').textContent = 'Saving…';

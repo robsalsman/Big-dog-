@@ -273,6 +273,28 @@ export class BigDogBrain {
     }
   }
 
+  /** Draft a short, natural phone script for a live call or voicemail. */
+  async callScript(input: { name?: string; company?: string; goal?: string; voicemail?: boolean }): Promise<string> {
+    const who = `${input.name || 'them'}${input.company ? ` at ${input.company}` : ''}`;
+    const fallback = input.voicemail
+      ? `Hi ${input.name || 'there'}, this is ${this.owner.name} with ${this.owner.company}. ${input.goal || "I wanted to reach out about how we can help."} Give me a call back when you get a chance — thanks!`
+      : `Hi ${input.name || 'there'}, this is ${this.owner.name} with ${this.owner.company}. ${input.goal || "I wanted to reach out about how we can help."} Do you have a quick minute?`;
+    if (!this.provider.live) return fallback;
+    try {
+      const out = await this.raw(
+        `Write a SHORT, natural phone ${input.voicemail ? 'voicemail' : 'call opener'} script (2-4 sentences, spoken aloud, no stage directions) ` +
+          `for me to ${input.voicemail ? 'leave as a voicemail for' : 'say when calling'} ${who}. ` +
+          `I am ${this.owner.name}, ${this.owner.title} at ${this.owner.company}. Goal: ${input.goal || 'open a warm conversation and earn a callback or next step'}. ` +
+          `Sound like a confident, friendly human — not a telemarketer. Return ONLY the words I should say.`,
+        undefined,
+        300,
+      );
+      return out.trim() || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
   /** Live web research on a lead (only when the backend supports it). */
   async research(query: string): Promise<string> {
     if (this.provider.webResearch) {

@@ -620,6 +620,19 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaul
     try { const r = await sendSms(body, req.body?.to ? String(req.body.to) : undefined); logActivity('sms', `Texted ${req.body?.to || 'you'}: ${body.slice(0, 60)}`); res.json({ ok: true, sid: r.sid }); }
     catch (err) { res.status(500).json({ error: (err as Error).message }); }
   });
+  // Draft a short phone/voicemail script for a contact (in the owner's voice).
+  app.post('/api/call/draft', async (req, res) => {
+    try {
+      const script = await reqBrain().callScript({
+        name: req.body?.name ? String(req.body.name) : undefined,
+        company: req.body?.company ? String(req.body.company) : undefined,
+        goal: req.body?.goal ? String(req.body.goal) : undefined,
+        voicemail: !!req.body?.voicemail,
+      });
+      res.json({ script });
+    } catch (err) { res.status(500).json({ error: (err as Error).message }); }
+  });
+
   app.post('/api/call', async (req, res) => {
     const message = String(req.body?.message ?? '').trim();
     if (!message) return res.status(400).json({ error: 'empty message' });
