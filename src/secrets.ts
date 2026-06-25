@@ -41,16 +41,15 @@ function decrypt(blob: string): string {
   } catch { return ''; }
 }
 
-/** The managed credentials the vault knows about (paste targets in the UI). */
+/** The MANAGED, SHARED credentials the vault holds — set once by the operator
+ * and used by every user. Per-user things (each person's mailbox, Zoom,
+ * Cal.com, alert phone, voice choice) are NOT here; users set those in their
+ * own Settings. */
 export const VAULT_KEYS = [
-  { name: 'anthropicKey', label: 'Claude API key (the brain)', secret: true },
-  { name: 'twilio.accountSid', label: 'Twilio Account SID', secret: false },
+  { name: 'anthropicKey', label: 'Claude API key (the shared brain)', secret: true },
+  { name: 'twilio.accountSid', label: 'Twilio Account SID (shared texting)', secret: false },
   { name: 'twilio.authToken', label: 'Twilio Auth Token', secret: true },
   { name: 'twilio.fromNumber', label: 'Twilio From Number', secret: false },
-  { name: 'twilio.ownerMobile', label: 'Owner mobile (alerts)', secret: false },
-  { name: 'zoom.accountId', label: 'Zoom Account ID', secret: false },
-  { name: 'zoom.clientId', label: 'Zoom Client ID', secret: false },
-  { name: 'zoom.clientSecret', label: 'Zoom Client Secret', secret: true },
   { name: 'stripe.secretKey', label: 'Stripe Secret Key (billing)', secret: true },
   { name: 'stripe.webhookSecret', label: 'Stripe Webhook Signing Secret', secret: true },
 ] as const;

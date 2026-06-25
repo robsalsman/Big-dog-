@@ -21,11 +21,12 @@ const FIELDS: (keyof TwilioCreds)[] = ['accountSid', 'authToken', 'fromNumber', 
 
 export function loadTwilioCreds(): TwilioCreds {
   return {
-    // Per-user setting → env → managed vault (operator's shared master creds).
+    // Account/from-number can fall back to the operator's shared (vault) number;
+    // ownerMobile is per-user — alerts go to each person's own phone.
     accountSid: settingsStore.get('twilio.accountSid') || process.env.TWILIO_ACCOUNT_SID || vault.get('twilio.accountSid'),
     authToken: settingsStore.get('twilio.authToken') || process.env.TWILIO_AUTH_TOKEN || vault.get('twilio.authToken'),
     fromNumber: settingsStore.get('twilio.fromNumber') || process.env.TWILIO_FROM_NUMBER || vault.get('twilio.fromNumber'),
-    ownerMobile: settingsStore.get('twilio.ownerMobile') || process.env.TWILIO_OWNER_MOBILE || vault.get('twilio.ownerMobile'),
+    ownerMobile: settingsStore.get('twilio.ownerMobile') || process.env.TWILIO_OWNER_MOBILE || '',
   };
 }
 

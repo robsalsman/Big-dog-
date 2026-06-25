@@ -2039,7 +2039,8 @@ async function renderAdminKeys() {
     <div class="card" style="border-left:3px solid var(--accent)">
       <strong>🔐 Managed service keys <span class="tag">admin</span></strong>
       <div class="muted small" style="margin:4px 0 10px">
-        Paste your master keys from your other server. They're <strong>encrypted at rest</strong> and become the shared credentials for everyone — so your users bring nothing but their email.
+        These are <strong>shared across everyone</strong> — set once, power all users (so they bring nothing but their email). Paste your master keys from your other server. They're <strong>encrypted at rest</strong>.
+        <br>👉 Your <strong>own</strong> email, Zoom, calendar, alert phone &amp; voice are personal — set those in the cards further down this page (each user sets their own).
         ${d.masterSecretSet ? '' : '<br><span style="color:var(--accent)">Tip: set <code>BIGDOG_MASTER_SECRET</code> in your .env for the strongest encryption.</span>'}
       </div>
       ${d.keys.map(row).join('')}
