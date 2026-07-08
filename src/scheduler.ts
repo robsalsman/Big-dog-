@@ -6,7 +6,7 @@ import { runCadenceSweep } from './cadence.js';
 import { allAccounts } from './accounts.js';
 import { sendDueDrafts } from './scheduledsend.js';
 import { runDueEnrollments } from './sequences.js';
-import { syncCustomersToCortex } from './cortex.js';
+import { syncCustomersToCortex, ingestResourcesToCortex } from './cortex.js';
 import { users, runWithUser } from './db.js';
 import { brainForUser } from './userbrain.js';
 import type { AppConfig } from './config.js';
@@ -55,6 +55,8 @@ export function startScheduler(
             // can be hallucinated (no-op unless CORTEX_URL + CORTEX_TOKEN are set).
             const grounded = await syncCustomersToCortex();
             if (grounded.synced > 0) console.log(`[big-dog] [${uid}] cortex: grounded ${grounded.synced} customer(s)`);
+            const resources = await ingestResourcesToCortex();
+            if (resources.sites > 0) console.log(`[big-dog] [${uid}] cortex: ingested ${resources.sites} customer website(s)`);
           } catch (err) {
             console.error(`[big-dog] [${uid}] sync error:`, (err as Error).message);
           }

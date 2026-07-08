@@ -20,6 +20,66 @@ interface DealRow {
   company: string; stage: string; value: number; notes: string; nextStep: string; updatedAt: string;
 }
 
+const FREE_MAIL = new Set(['gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com', 'aol.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com']);
+// Fetched once per process to avoid re-hitting the same site every tick.
+const fetchedDomains = new Set<string>();
+
+function cortexEnv(): { url: string; token: string } | null {
+  const url = (process.env.CORTEX_URL || '').replace(/\/$/, '');
+  const token = process.env.CORTEX_TOKEN || '';
+  return url && token ? { url, token } : null;
+}
+
+async function pushToCortex(env: { url: string; token: string }, body: Record<string, unknown>): Promise<boolean> {
+  try {
+    const res = await fetch(`${env.url}/cortex/ingest`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${env.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// Spin up grounded Cortex endpoints for the EXTERNAL resources Big Dog needs to
+// sell: each customer company's website (so Big Dog can answer "what does this
+// company do / what do they care about" from real source, not a guess). LinkedIn
+// profile pages are intentionally NOT scraped here — LinkedIn blocks automated
+// access and it violates their ToS; use Big Dog's lead-research brief or an
+// Apollo/permitted data source and feed that in instead.
+export async function ingestResourcesToCortex(): Promise<{ sites: number; skipped?: boolean }> {
+  const env = cortexEnv();
+  if (!env) return { sites: 0, skipped: true };
+  const db = getDb();
+  const rows = db.prepare('SELECT DISTINCT contactEmail, company FROM deals').all() as { contactEmail: string; company: string }[];
+  let sites = 0;
+  for (const r of rows) {
+    const domain = (r.contactEmail || '').split('@')[1]?.toLowerCase().trim();
+    if (!domain || FREE_MAIL.has(domain) || fetchedDomains.has(domain)) continue;
+    fetchedDomains.add(domain);
+    try {
+      const res = await fetch(`https://${domain}`, { signal: AbortSignal.timeout(12000), headers: { 'user-agent': 'Mozilla/5.0 (compatible; BigDog/1.0)' } });
+      if (!res.ok) continue;
+      const html = await res.text();
+      const text = html
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/gi, ' ').replace(/\s+/g, ' ').trim().slice(0, 6000);
+      if (text.length < 80) continue;
+      const ok = await pushToCortex(env, {
+        source: 'web-customer', subject: `company-${slug(r.company || domain)}`,
+        text: `WEBSITE ${domain}${r.company ? ` (${r.company})` : ''}: ${text}`,
+        refId: `web-${domain}`, replace: true,
+      });
+      if (ok) sites++;
+    } catch {
+      /* site blocked/unreachable — skip */
+    }
+  }
+  return { sites };
+}
+
 export async function syncCustomersToCortex(): Promise<{ synced: number; skipped?: boolean }> {
   const url = (process.env.CORTEX_URL || '').replace(/\/$/, '');
   const token = process.env.CORTEX_TOKEN || '';
