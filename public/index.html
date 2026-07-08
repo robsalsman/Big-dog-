@@ -3,7 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Big Dog</title>
+    <title>Big Dog · Builda</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/styles.css" />
     <link
       rel="icon"
@@ -12,13 +15,13 @@
   </head>
   <body>
     <header class="topbar">
-      <div class="brand">
-        <span class="logo">🐕</span>
+      <a class="brand" href="https://builda.company" title="Builda">
+        <span class="logo"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" fill="#fff"/><circle cx="5" cy="6" r="2" fill="#fff" opacity=".85"/><circle cx="19" cy="6" r="2" fill="#fff" opacity=".85"/><circle cx="5" cy="18" r="2" fill="#fff" opacity=".85"/><circle cx="19" cy="18" r="2" fill="#fff" opacity=".85"/><path d="M12 12L5 6M12 12l7-6M12 12l-7 6M12 12l7 6" stroke="#fff" stroke-width="1.1" opacity=".55"/></svg></span>
         <div>
-          <h1>Big Dog</h1>
+          <h1>Big Dog <span style="font-size:11px;font-weight:600;color:var(--muted)">by Builda</span></h1>
           <p id="tagline">What's up, Big Dog!?</p>
         </div>
-      </div>
+      </a>
       <div class="topbar-actions">
         <span id="brain-pill" class="pill">brain: …</span>
         <button id="logout-btn" class="btn ghost" style="display:none" onclick="logout()">Log out</button>
@@ -66,7 +69,7 @@
 
     <div id="login" class="login-overlay" style="display:none">
       <div class="login-box">
-        <div class="logo" style="font-size:46px">🐕</div>
+        <div style="font-size:46px">🐕</div>
         <h2 id="login-title">What's up, Big Dog!?</h2>
         <p class="muted small" id="login-sub">Log in to continue.</p>
         <input id="login-user" type="text" autocomplete="username" placeholder="Username" />
