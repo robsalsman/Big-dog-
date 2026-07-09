@@ -166,6 +166,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaul
   app.use((req, res, next) => {
     if (!req.path.startsWith('/api/')) return next();
     if (req.path.startsWith('/api/auth/')) return next();
+    if (req.path === '/api/company') return next(); // token-gated (Builda platform), not session
     const uid = verifyToken(cookieOf(req));
     if (!uid) return res.status(401).json({ error: 'authentication required' });
     runWithUser(uid, () => {
