@@ -930,6 +930,29 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaul
     }
   });
 
+  // Builda hands a built company to Big Dog: educate it (product + ICP + offer) and
+  // start finding customers. Token-gated — called by the Builda platform.
+  app.post('/api/company', async (req, res) => {
+    const tok = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    if (!process.env.CORTEX_TOKEN || tok !== process.env.CORTEX_TOKEN) return res.status(401).json({ error: 'unauthorized' });
+    const name = String(req.body?.name || '').slice(0, 160);
+    const product = String(req.body?.product || '').slice(0, 500);
+    const icpCriteria = String(req.body?.icpCriteria || '').slice(0, 500);
+    const offer = String(req.body?.offer || '').slice(0, 300);
+    if (!name || !icpCriteria) return res.status(400).json({ error: 'name + icpCriteria required' });
+    res.json({ ok: true, queued: true });
+    // Background: prospect for the company's ICP and add customers to the pipeline.
+    runWithUser('default', async () => {
+      try {
+        logActivity('company', `New company to grow: ${name} — ${product}. Finding customers…`);
+        const prospects = await findProspects(icpCriteria, cfg, defaultBrain);
+        let saved = 0;
+        for (const p of prospects.slice(0, 8)) { saveProspectAsDeal({ ...p, notes: `${name} — ${offer}` }); saved++; }
+        logActivity('company', `${name}: found ${saved} prospect(s) and added them to the pipeline.`);
+      } catch (e) { console.error('[company] prospecting failed:', (e as Error).message); }
+    });
+  });
+
   // Find + verify a contact's email from name + domain (Hunter-style engine).
   app.post('/api/prospect/email', async (req, res) => {
     const domain = (req.body?.domain as string) ?? '';
