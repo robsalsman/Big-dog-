@@ -41,7 +41,7 @@ import { vault, publicVault } from './secrets.js';
 import { invalidateAllBrains } from './userbrain.js';
 import { stripeConfigured, packs, savePacks, createCheckout, verifySignature, handleEvent, type Pack } from './economy/stripe.js';
 import { grant } from './economy/ledger.js';
-import { summary as economySummary, setBudget, remainingThisMonth } from './economy/ledger.js';
+import { summary as economySummary, setBudget, remainingThisMonth, ensureAccount } from './economy/ledger.js';
 import { rateCard, saveRateCard, defaultBudgetCents } from './economy/rates.js';
 import { economy as economyStore, users as allUsers } from './db.js';
 import type { BigDogBrain } from './brain.js';
@@ -121,6 +121,28 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaul
     const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
     res.setHeader('Set-Cookie', `${COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAgeSec}${secure ? '; Secure' : ''}`);
   };
+
+  // ── Linked login (SSO from a Builda account) ────────────────────────
+  // A founder logged into Builda lands here (bigdog.builda.company/sso?t=<builda
+  // session>) with no separate Big Dog login. We validate the token against Clon,
+  // resolve their founder workspace, mark them unlimited (a paying founder — the
+  // operator covers compute), issue a Big Dog session, and drop them into the app.
+  const founderUidFor = (raw: unknown): string => 'founder_' + String(raw || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+  app.get('/sso', async (req, res) => {
+    const t = String((req.query as { t?: string })?.t || '');
+    if (!t) return res.redirect('/');
+    try {
+      const r = await fetch('https://clonecho.builda.company/account/me', { headers: { authorization: 'Bearer ' + t } });
+      if (!r.ok) return res.redirect('/?sso=fail');
+      const j = (await r.json()) as { account?: { id?: string } };
+      const acctId = j.account?.id;
+      if (!acctId) return res.redirect('/?sso=fail');
+      const uid = founderUidFor(acctId);
+      try { ensureAccount(uid); setBudget(uid, { unlimited: true }); } catch { /* budget best-effort */ }
+      setSession(req, res, issueToken(uid), 30 * 86_400);
+      return res.redirect('/');
+    } catch { return res.redirect('/?sso=fail'); }
+  });
 
   // ── Auth (unguarded) ────────────────────────────────────────────────
   // The dashboard always requires login now (multi-user). If no accounts exist
@@ -948,6 +970,9 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaul
     const offer = String(req.body?.offer || '').slice(0, 300);
     if (!name || !icpCriteria) return res.status(400).json({ error: 'name + icpCriteria required' });
     const uid = founderUid(req.body?.founderUid);
+    // A founder handed a company is a paying Big Dog customer — run their
+    // workspace unlimited so prospecting (LLM/web-search) is never budget-blocked.
+    try { ensureAccount(uid); setBudget(uid, { unlimited: true }); } catch { /* best-effort */ }
     res.json({ ok: true, queued: true });
     // Background: prospect for the ICP and add customers to THIS founder's pipeline.
     runWithUser(uid, async () => {

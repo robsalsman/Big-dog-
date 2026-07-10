@@ -83,6 +83,10 @@ export function verifyToken(token: string | undefined): string | null {
   const b = Buffer.from(expected);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
   if (Date.now() - Number(iat) >= MAX_AGE_MS) return null;
+  // Builda founders (SSO'd from their Builda account) have no local Big Dog user
+  // record — their workspace id is founder_<accountId>. Accept those; everyone
+  // else must be a registered Big Dog user.
+  if (userId!.startsWith('founder_')) return userId!;
   return users.byId(userId!) ? userId! : null;
 }
 
