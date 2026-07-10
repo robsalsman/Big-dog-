@@ -140,8 +140,9 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaul
       const uid = founderUidFor(acctId);
       try { ensureAccount(uid); setBudget(uid, { unlimited: true }); } catch { /* budget best-effort */ }
       setSession(req, res, issueToken(uid), 30 * 86_400);
-      return res.redirect('/');
-    } catch { return res.redirect('/?sso=fail'); }
+      // A founder's Big Dog is their companies dashboard, not the single-user app.
+      return res.redirect('https://builda.company/account/?view=bigdog');
+    } catch { return res.redirect('https://builda.company/account/'); }
   });
 
   // ── Auth (unguarded) ────────────────────────────────────────────────
