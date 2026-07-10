@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
-import { messages, deals, events, drafts, memories, activity, suppressed, contacts, sequences, enrollments, attachments, runWithUser, setContextBrain, currentBrainRaw, currentUserId, users } from './db.js';
+import { messages, deals, events, drafts, memories, activity, suppressed, contacts, sequences, enrollments, attachments, runWithUser, setContextBrain, currentBrainRaw, currentUserId, users, getDb, mailAccountsStore } from './db.js';
 import { saveAttachment, resolveAttachments } from './repo.js';
 import { createSequence, enrollContacts, runDueEnrollments, DEFAULT_SEQUENCE_STEPS } from './sequences.js';
 import { runAutopilot } from './autopilot.js';
@@ -166,7 +166,7 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaul
   app.use((req, res, next) => {
     if (!req.path.startsWith('/api/')) return next();
     if (req.path.startsWith('/api/auth/')) return next();
-    if (req.path === '/api/company') return next(); // token-gated (Builda platform), not session
+    if (req.path === '/api/company' || req.path === '/api/founder-activity' || req.path === '/api/founder-mailbox' || req.path === '/api/founder-mailbox/list' || req.path === '/api/founder-inbound' || req.path === '/api/founder-record') return next(); // token-gated (Builda platform), not session
     const uid = verifyToken(cookieOf(req));
     if (!uid) return res.status(401).json({ error: 'authentication required' });
     runWithUser(uid, () => {
@@ -933,6 +933,12 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaul
 
   // Builda hands a built company to Big Dog: educate it (product + ICP + offer) and
   // start finding customers. Token-gated — called by the Builda platform.
+  // Per-founder workspace id — each Builda founder gets an isolated Big Dog DB.
+  const founderUid = (raw: unknown): string => {
+    const s = String(raw || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+    return s ? `founder_${s}` : 'default';
+  };
+
   app.post('/api/company', async (req, res) => {
     const tok = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
     if (!process.env.CORTEX_TOKEN || tok !== process.env.CORTEX_TOKEN) return res.status(401).json({ error: 'unauthorized' });
@@ -941,9 +947,10 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaul
     const icpCriteria = String(req.body?.icpCriteria || '').slice(0, 500);
     const offer = String(req.body?.offer || '').slice(0, 300);
     if (!name || !icpCriteria) return res.status(400).json({ error: 'name + icpCriteria required' });
+    const uid = founderUid(req.body?.founderUid);
     res.json({ ok: true, queued: true });
-    // Background: prospect for the company's ICP and add customers to the pipeline.
-    runWithUser('default', async () => {
+    // Background: prospect for the ICP and add customers to THIS founder's pipeline.
+    runWithUser(uid, async () => {
       try {
         logActivity('company', `New company to grow: ${name} — ${product}. Finding customers…`);
         const prospects = await findProspects(icpCriteria, cfg, defaultBrain);
@@ -951,6 +958,129 @@ export function createServer(cfg: AppConfig, accountsCfg: AccountsConfig, defaul
         for (const p of prospects.slice(0, 8)) { saveProspectAsDeal({ ...p, notes: `${name} — ${offer}` }); saved++; }
         logActivity('company', `${name}: found ${saved} prospect(s) and added them to the pipeline.`);
       } catch (e) { console.error('[company] prospecting failed:', (e as Error).message); }
+    });
+  });
+
+  // Founder's own Big Dog activity + pipeline for a company — powers the Builda
+  // dashboard's itemized feed. Token-gated; reads only that founder's workspace.
+  app.post('/api/founder-activity', (req, res) => {
+    const tok = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    if (!process.env.CORTEX_TOKEN || tok !== process.env.CORTEX_TOKEN) return res.status(401).json({ error: 'unauthorized' });
+    const uid = founderUid(req.body?.founderUid);
+    const company = String(req.body?.company || '').slice(0, 160);
+    runWithUser(uid, () => {
+      try {
+        let acts = activity.recent(80);
+        if (company) acts = acts.filter((a) => (a.message || '').includes(company));
+        const db = getDb();
+        const total = (db.prepare('SELECT COUNT(*) n FROM deals').get() as { n: number }).n;
+        const forCompany = company ? (db.prepare('SELECT COUNT(*) n FROM deals WHERE notes LIKE ?').get(`%${company}%`) as { n: number }).n : total;
+        res.json({ activity: acts.slice(0, 25), deals: forCompany, totalDeals: total });
+      } catch (e) { res.status(500).json({ error: (e as Error).message }); }
+    });
+  });
+
+  // Cortex writes a record into a founder's Big Dog workspace — a lead, contact,
+  // or note surfaced from the user's conversation with Cortex. Token-gated and
+  // strictly scoped to that founder's own workspace (founder_<accountId>).
+  app.post('/api/founder-record', (req, res) => {
+    const tok = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    if (!process.env.CORTEX_TOKEN || tok !== process.env.CORTEX_TOKEN) return res.status(401).json({ error: 'unauthorized' });
+    const uid = founderUid(req.body?.founderUid);
+    const kind = String(req.body?.kind || 'lead');
+    const name = String(req.body?.name || '').slice(0, 160);
+    const company = String(req.body?.company || '').slice(0, 160);
+    const email = String(req.body?.email || '').trim().toLowerCase().slice(0, 200);
+    const role = String(req.body?.role || req.body?.title || '').slice(0, 160);
+    const note = String(req.body?.note || '').slice(0, 500);
+    if (!name && !email && !note) return res.status(400).json({ error: 'name, email, or note required' });
+    runWithUser(uid, () => {
+      try {
+        if (kind === 'note') {
+          activity.add('cortex', note || `Note about ${name || email}`);
+          if (email) memories.add(email, note || `Cortex note about ${name}`);
+          return res.json({ ok: true, kind: 'note' });
+        }
+        if (kind === 'contact') {
+          if (email) { contacts.seen(email, name); memories.add(email, note || `Contact added by Cortex from conversation.`); }
+          activity.add('cortex', `Cortex added contact: ${name || email}${company ? ' (' + company + ')' : ''}.`);
+          return res.json({ ok: true, kind: 'contact' });
+        }
+        // default: lead → into the pipeline (creates a deal + contact + memory)
+        const deal = saveProspectAsDeal({ name: name || email, title: role, company, email, domain: (email.split('@')[1] || ''), linkedin: '', location: '', source: 'cortex', notes: note || 'Added by Cortex from conversation' });
+        activity.add('cortex', `Cortex added lead: ${name || email}${company ? ' at ' + company : ''} — from your conversation.`);
+        res.json({ ok: true, kind: 'lead', dealId: deal.id });
+      } catch (e) { res.status(500).json({ error: (e as Error).message }); }
+    });
+  });
+
+  // Connect a founder's email so Big Dog can SEND outreach from their workspace.
+  // SMTP/IMAP auto-detected for common providers; app password required.
+  const mailboxDefaults = (email: string) => {
+    const d = (email.split('@')[1] || '').toLowerCase();
+    if (/gmail\.com|googlemail\.com/.test(d)) return { smtp: { host: 'smtp.gmail.com', port: 465, secure: true }, imap: { host: 'imap.gmail.com', port: 993 } };
+    if (/outlook\.|hotmail\.|live\.|office365/.test(d)) return { smtp: { host: 'smtp-mail.outlook.com', port: 587, secure: false }, imap: { host: 'outlook.office365.com', port: 993 } };
+    if (/yahoo\./.test(d)) return { smtp: { host: 'smtp.mail.yahoo.com', port: 465, secure: true }, imap: { host: 'imap.mail.yahoo.com', port: 993 } };
+    if (/icloud\.|me\.com/.test(d)) return { smtp: { host: 'smtp.mail.me.com', port: 587, secure: false }, imap: { host: 'imap.mail.me.com', port: 993 } };
+    return null;
+  };
+  app.post('/api/founder-mailbox', async (req, res) => {
+    const tok = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    if (!process.env.CORTEX_TOKEN || tok !== process.env.CORTEX_TOKEN) return res.status(401).json({ error: 'unauthorized' });
+    const uid = founderUid(req.body?.founderUid);
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const pass = String(req.body?.password || req.body?.appPassword || '');
+    if (!email || !pass) return res.status(400).json({ error: 'Email and app password are required.' });
+    const def = mailboxDefaults(email);
+    const smtpHost = String(req.body?.smtpHost || def?.smtp.host || '');
+    if (!smtpHost) return res.status(400).json({ error: 'Unknown email provider — enter your SMTP host and port.' });
+    const smtpPort = Number(req.body?.smtpPort || def?.smtp.port || 465);
+    const smtpSecure = req.body?.smtpSecure != null ? !!req.body.smtpSecure : (def?.smtp.secure ?? smtpPort === 465);
+    const user = String(req.body?.smtpUser || email);
+    const imapHost = String(req.body?.imapHost || def?.imap.host || smtpHost.replace(/^smtp[.-]?/, 'imap.'));
+    const imapPort = Number(req.body?.imapPort || def?.imap.port || 993);
+    let verified = false, warning = '';
+    try {
+      const nm = (await import('nodemailer')).default;
+      await nm.createTransport({ host: smtpHost, port: smtpPort, secure: smtpSecure, auth: { user, pass } }).verify();
+      verified = true;
+    } catch (e) { warning = 'Saved, but the login could not be verified: ' + (e as Error).message + ' (Gmail/Outlook need an app password, not your normal password.)'; }
+    const account = { id: 'm_' + randomUUID().slice(0, 8), label: email, email, smtp: { host: smtpHost, port: smtpPort, secure: smtpSecure, user, pass }, imap: { host: imapHost, port: imapPort, secure: true, user, pass } };
+    runWithUser(uid, () => { mailAccountsStore.set(account as never); });
+    res.json({ ok: true, verified, warning: warning || undefined, email });
+  });
+  app.post('/api/founder-mailbox/list', (req, res) => {
+    const tok = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    if (!process.env.CORTEX_TOKEN || tok !== process.env.CORTEX_TOKEN) return res.status(401).json({ error: 'unauthorized' });
+    const uid = founderUid(req.body?.founderUid);
+    runWithUser(uid, () => { res.json({ mailboxes: mailAccountsStore.all().map((a) => ({ email: a.email, label: a.label })) }); });
+  });
+
+  // Inbound reply to a company address (routed here by Builda) — drop it into
+  // this founder's inbox and thread it onto the matching deal (by sender email).
+  app.post('/api/founder-inbound', (req, res) => {
+    const tok = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    if (!process.env.CORTEX_TOKEN || tok !== process.env.CORTEX_TOKEN) return res.status(401).json({ error: 'unauthorized' });
+    const uid = founderUid(req.body?.founderUid);
+    runWithUser(uid, () => {
+      try {
+        const fromRaw = String(req.body?.from || '');
+        const fromEmail = (fromRaw.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+/) || [''])[0].toLowerCase();
+        const fromName = (fromRaw.replace(/<[^>]*>/, '').replace(/["']/g, '').trim()) || fromEmail || 'Unknown';
+        const text = String(req.body?.text || req.body?.html || '');
+        let dealId: string | null = null;
+        try { const d = getDb().prepare('SELECT id FROM deals WHERE lower(contactEmail)=? LIMIT 1').get(fromEmail) as { id: string } | undefined; dealId = d?.id ?? null; } catch { /* no deal */ }
+        const acct = mailAccountsStore.all()[0]?.id || 'inbound';
+        messages.upsert({
+          id: randomUUID(), accountId: acct, messageId: String(req.body?.messageId || randomUUID()),
+          threadId: String(req.body?.inReplyTo || req.body?.threadId || randomUUID()),
+          fromName, fromEmail, toEmails: String(req.body?.to || ''), subject: String(req.body?.subject || '(no subject)'),
+          snippet: text.replace(/\s+/g, ' ').slice(0, 180), body: text, date: String(req.body?.date || new Date().toISOString()),
+          folder: 'inbox', unread: 1, dealId, priority: null, summary: null, analyzed: 0,
+        } as never);
+        logActivity('reply', `📥 Reply from ${fromName} — "${String(req.body?.subject || '').slice(0, 60)}"`);
+        res.json({ ok: true, dealId });
+      } catch (e) { res.status(500).json({ error: (e as Error).message }); }
     });
   });
 
