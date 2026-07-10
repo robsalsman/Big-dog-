@@ -10,7 +10,8 @@
     <link rel="stylesheet" href="/styles.css" />
     <link
       rel="icon"
-      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐕</text></svg>"
+      type="image/svg+xml"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%236d5efc'/><stop offset='1' stop-color='%23e05b9e'/></linearGradient></defs><rect width='32' height='32' rx='8' fill='url(%23g)'/><g fill='%23fff'><ellipse cx='16' cy='21' rx='5.6' ry='4.6'/><circle cx='8.8' cy='15.4' r='2.2'/><circle cx='13.5' cy='11.1' r='2.3'/><circle cx='18.5' cy='11.1' r='2.3'/><circle cx='23.2' cy='15.4' r='2.2'/></g></svg>"
     />
   </head>
   <body>
@@ -24,6 +25,9 @@
       </a>
       <div class="topbar-actions">
         <span id="brain-pill" class="pill" style="display:none">brain: …</span>
+        <a class="btn ghost" href="https://builda.company/cortex/" title="Ask Cortex — grounded answers">🧠 Ask Cortex</a>
+        <a class="btn ghost" href="https://builda.company/app/" title="Build a company with Buildo">✨ Buildo</a>
+        <a class="btn ghost" href="https://builda.company/account/" title="Your Builda companies dashboard">🏢 Dashboard</a>
         <button id="logout-btn" class="btn ghost" style="display:none" onclick="logout()">Log out</button>
         <button class="btn" onclick="openCompose()">✏️ Compose</button>
         <button id="sync-btn" class="btn primary">Sync &amp; work the inbox</button>
@@ -72,7 +76,7 @@
         <div style="font-size:46px">🐕</div>
         <h2 id="login-title">What's up, Big Dog!?</h2>
         <p class="muted small" id="login-sub">Log in to continue.</p>
-        <p class="muted small" style="margin-top:4px">Your AI sales rep — powered by <b style="color:var(--accent)">Cortex LEM</b>.</p>
+        <p class="muted small" style="margin-top:4px">Your AI Head of Growth — powered by <b style="color:var(--accent)">Cortex LEM</b>.</p>
         <input id="login-user" type="text" autocomplete="username" placeholder="Username" />
         <input id="login-email" type="email" autocomplete="email" placeholder="Email (optional)" style="display:none" />
         <input id="login-pw" type="password" autocomplete="current-password" placeholder="Password" />
