@@ -15,19 +15,21 @@ export class BigDogBrain {
   private provider: LLMProvider;
   private owner: Owner;
   private bookingUrl: string;
+  private storeUrl: string;
   private system: string;
 
-  constructor(provider: LLMProvider, owner: Owner, bookingUrl = '') {
+  constructor(provider: LLMProvider, owner: Owner, bookingUrl = '', storeUrl = '') {
     this.provider = provider;
     this.owner = owner;
     this.bookingUrl = bookingUrl;
-    this.system = bigDogSystemPrompt(owner, bookingUrl);
+    this.storeUrl = storeUrl;
+    this.system = bigDogSystemPrompt(owner, bookingUrl, storeUrl);
   }
 
   /** Update the owner profile/voice and rebuild the persona (from the in-app editor). */
   setOwner(owner: Owner): void {
     this.owner = owner;
-    this.system = bigDogSystemPrompt(owner, this.bookingUrl);
+    this.system = bigDogSystemPrompt(owner, this.bookingUrl, this.storeUrl);
   }
 
   /**
@@ -156,7 +158,10 @@ export class BigDogBrain {
   /** Find prospects from public web data (only when the backend has web access). */
   async prospect(criteria: string): Promise<Prospect[]> {
     if (!this.provider.webProspect) return [];
-    const out = await this.provider.webProspect(criteria).catch(() => '');
+    // Web search is occasionally rate-limited and returns nothing — one retry
+    // turns an intermittent empty pull into a real result set.
+    let out = await this.provider.webProspect(criteria).catch(() => '');
+    if (!out) out = await this.provider.webProspect(criteria).catch(() => '');
     if (!out) return [];
 
     const toProspects = (arr: Partial<Prospect>[]): Prospect[] =>
@@ -434,7 +439,7 @@ export class BigDogBrain {
     if (!this.provider.live) {
       return {
         subject: `Following up — ${deal.title}`,
-        body: `Hi ${deal.contactName.split(' ')[0] || 'there'},\n\nCircling back on this — still keen to help you move it forward. Worth a quick call this week?\n\n${this.owner.signature}`,
+        body: `Hi ${deal.contactName.split(' ')[0] || 'there'},\n\nCircling back — want me to get you set up? You can start right here${this.storeUrl ? `: ${this.storeUrl}` : ''}.\n\n${this.owner.signature}`,
         rationale: `Fallback nudge (${reason}).`,
       };
     }
@@ -453,14 +458,14 @@ export class BigDogBrain {
         user:
           `Write a short, warm follow-up to ${deal.contactName} at ${deal.company} — as me, in my voice. ` +
           `Why now: ${reason}. The deal is "${deal.title}" (stage: ${deal.stage}); the next step is "${deal.nextStep}".${memoryBlock}\n\n` +
-          `Keep it brief and non-needy. Re-open with a reason to talk, drive to the next step. ` +
+          `Keep it brief and non-needy. Re-open with a reason, and drive them to complete the purchase self-serve${this.storeUrl ? ` (${this.storeUrl})` : ''} — don't push for a call. ` +
           `Respond with ONLY the JSON object {subject, body, rationale}.`,
       });
       return JSON.parse(extractJson(out)) as { subject: string; body: string; rationale: string };
     } catch {
       return {
         subject: `Following up — ${deal.title}`,
-        body: `Hi ${deal.contactName.split(' ')[0] || 'there'},\n\nCircling back — still happy to help you get this over the line. Worth a quick call this week?\n\n${this.owner.signature}`,
+        body: `Hi ${deal.contactName.split(' ')[0] || 'there'},\n\nCircling back — ready to grab it? You can get started here${this.storeUrl ? `: ${this.storeUrl}` : ''}.\n\n${this.owner.signature}`,
         rationale: `Fallback nudge (${reason}).`,
       };
     }
@@ -477,8 +482,8 @@ export class BigDogBrain {
       return {
         subject: `Quick idea for ${p.company || 'your team'}`,
         body:
-          `Hi ${first},\n\nI work with teams like ${p.company || 'yours'} and had a specific idea I think is worth 15 minutes. ` +
-          `Open to a quick call next week?\n\n${this.owner.signature}\n\nP.S. Not the right time? Just reply "no" and I'll close the loop.`,
+          `Hi ${first},\n\nI think ${this.owner.company} is a genuine fit for ${p.company || 'your team'}. ` +
+          `You can see it and get started right here${this.storeUrl ? `: ${this.storeUrl}` : ''}.\n\n${this.owner.signature}\n\nP.S. Not the right time? Just reply "no" and I'll close the loop.`,
         rationale: 'Fallback cold intro (no model live).',
       };
     }
@@ -500,7 +505,7 @@ export class BigDogBrain {
           `Write a SHORT personalized cold intro email to ${p.name}${p.title ? `, ${p.title}` : ''}` +
           `${p.company ? ` at ${p.company}` : ''} — as me, in my voice.${ctx}\n\n` +
           `Rules: 3–5 sentences. Open with a specific, genuine hook (use the research — no generic flattery). ` +
-          `Make ONE clear, low-friction ask (a quick call). Never sound like a mass blast. Sign off as me. ` +
+          `Make ONE clear ask that drives a SELF-SERVE purchase — buy it / start / order right now${this.storeUrl ? ` (${this.storeUrl})` : ''}. Do NOT ask for a call, demo, or to "book 20 minutes" — the goal is to close the sale with no human involved. Never sound like a mass blast. Sign off as me. ` +
           `End with a one-line P.S. opt-out: 'Not the right time? Just reply "no" and I'll close the loop.' ` +
           `Respond with ONLY the JSON object {subject, body, rationale}.`,
       });
