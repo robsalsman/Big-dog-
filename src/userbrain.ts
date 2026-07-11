@@ -18,7 +18,7 @@ export function brainForUser(userId: string, cfg: AppConfig): BigDogBrain {
   const cached = brains.get(userId);
   if (cached) return cached;
   const provider = buildProvider(loadSettings(cfg));
-  const brain = new BigDogBrain(provider, loadOwner(cfg), cfg.calcom?.bookingUrl);
+  const brain = new BigDogBrain(provider, loadOwner(cfg), cfg.calcom?.bookingUrl, cfg.storeUrl);
   brains.set(userId, brain);
   return brain;
 }

@@ -98,7 +98,10 @@ export class AnthropicProvider implements LLMProvider {
 
   async webProspect(criteria: string): Promise<string> {
     assertBudget();
-    const res = await this.client.messages.create({
+    // Stream this — it chains several web searches and can run long; a
+    // non-streaming call risks hitting the request timeout and hanging the whole
+    // handoff. Streaming + finalMessage() gets the complete response safely.
+    const stream = this.client.messages.stream({
       model: this.model,
       max_tokens: 3000,
       messages: [
@@ -117,8 +120,12 @@ export class AnthropicProvider implements LLMProvider {
             `Skip anyone with no domain and no email. Never fabricate a specific email — leave "email":"" if unsure, but still give the "domain".`,
         },
       ],
-      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 8 }],
-    } as Anthropic.MessageCreateParamsNonStreaming);
+      // Basic web search — the dynamic-filtering variant (…20260209) runs a
+      // server-side code-execution pass per query that pushes this call past two
+      // minutes; the basic tool returns results fast, which is all we need here.
+      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
+    } as Anthropic.MessageStreamParams);
+    const res = await stream.finalMessage();
     this.meter(res);
 
     return res.content

@@ -98,10 +98,14 @@ export async function mxHost(domain: string): Promise<string | null> {
 function smtpProbe(
   host: string,
   recipients: string[],
-  opts: { port?: number; timeoutMs?: number } = {},
+  opts: { port?: number; timeoutMs?: number; hardCapMs?: number } = {},
 ): Promise<Record<string, number>> {
   const port = opts.port ?? 25;
   const timeoutMs = opts.timeoutMs ?? 8000;
+  // Absolute ceiling on the whole session — the per-step idle timeout resets on
+  // every server reply, so a tarpit that drip-answers each RCPT could otherwise
+  // hold the socket open indefinitely. A legit server answers in well under this.
+  const hardCapMs = opts.hardCapMs ?? timeoutMs;
 
   return new Promise((resolve) => {
     const results: Record<string, number> = {};
@@ -111,7 +115,9 @@ function smtpProbe(
 
     const socket = net.createConnection({ host, port });
     socket.setTimeout(timeoutMs);
+    let hardTimer: NodeJS.Timeout | undefined;
     const done = () => {
+      if (hardTimer) clearTimeout(hardTimer);
       try {
         socket.destroy();
       } catch {
@@ -119,9 +125,10 @@ function smtpProbe(
       }
       resolve(results);
     };
+    hardTimer = setTimeout(done, hardCapMs);
     socket.on('timeout', done);
     socket.on('error', done);
-    socket.on('close', () => resolve(results));
+    socket.on('close', () => { if (hardTimer) clearTimeout(hardTimer); resolve(results); });
 
     const send = (line: string) => socket.write(line + '\r\n');
 

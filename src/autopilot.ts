@@ -116,7 +116,13 @@ export async function runAutopilot(
   // Build a meeting-ask drip and enroll everyone.
   const seq = createSequence(`Autopilot — ${plan.criteria.slice(0, 40)}`, meetingSequenceSteps(plan.valueProp, cfg.calcom?.bookingUrl || ''), !!opts.fullyAutomate);
   const accountId = opts.accountId || allAccounts()[0]?.id;
-  const { enrolled } = enrollContacts(seq.id, leads.map((r) => ({ email: r.email, name: r.name, company: r.company })), accountId);
+  // Never auto-send to an address we couldn't confirm. Under full-automate,
+  // unverified pattern guesses stay in the pipeline for review instead of being
+  // blasted; in draft mode everything is queued for your approval anyway.
+  const enrollable = opts.fullyAutomate ? leads.filter((r) => r.confidence !== 'unverified') : leads;
+  const held = leads.length - enrollable.length;
+  if (held > 0) notes.push(`${held} unverified lead(s) held back from auto-send — review them in the pipeline before reaching out.`);
+  const { enrolled } = enrollContacts(seq.id, enrollable.map((r) => ({ email: r.email, name: r.name, company: r.company })), accountId);
 
   // Kick off the first touches immediately.
   const firstTouches = await runDueEnrollments(brain, cfg).catch(() => 0);

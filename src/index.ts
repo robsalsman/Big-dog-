@@ -20,7 +20,7 @@ async function main() {
   // which fall back to env vars. Switchable later from the in-app Settings screen.
   const provider = buildProvider(loadSettings(cfg));
   if (provider.ping) await provider.ping();
-  const brain = new BigDogBrain(provider, loadOwner(cfg), cfg.calcom?.bookingUrl);
+  const brain = new BigDogBrain(provider, loadOwner(cfg), cfg.calcom?.bookingUrl, cfg.storeUrl);
 
   // Seed the first admin account from env on a fresh install (optional).
   seedAdminFromEnv(process.env.BIGDOG_ADMIN_USER, process.env.BIGDOG_PASSWORD);

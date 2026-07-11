@@ -32,6 +32,8 @@ export interface AppConfig {
   slack: { botToken: string; appToken: string; channel: string; webhookUrl: string } | undefined;
   // Cal.com scheduling (cloud or self-hosted open-source instance)
   calcom: { apiKey: string; baseUrl: string; bookingUrl: string } | undefined;
+  // Storefront / buy link — where Big Dog drives prospects to purchase self-serve
+  storeUrl: string;
   // Lead generation / prospecting
   prospectProvider: 'web' | 'apollo' | 'auto';
   apolloKey: string | undefined;
@@ -95,6 +97,7 @@ export function loadConfig(): AppConfig {
     agentMaxSteps: Number(process.env.BIGDOG_AGENT_MAX_STEPS ?? 8),
     prospectProvider,
     apolloKey,
+    storeUrl: process.env.STORE_URL?.trim() || '',
     browser: { mode: browserMode, allowedDomains: process.env.BIGDOG_BROWSER_ALLOWED_DOMAINS?.trim() || '' },
     provider,
     ollamaHost: process.env.OLLAMA_HOST || 'http://localhost:11434',

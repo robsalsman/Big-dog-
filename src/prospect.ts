@@ -233,7 +233,10 @@ export async function enrichRows(
  */
 export async function findProspects(criteria: string, cfg: AppConfig, brain: BigDogBrain): Promise<Prospect[]> {
   const useApollo = cfg.prospectProvider === 'apollo' || (cfg.prospectProvider === 'auto' && !!cfg.apolloKey);
-  const raw = useApollo && cfg.apolloKey ? await apolloSearch(cfg.apolloKey, criteria) : await brain.prospect(criteria);
+  // Bound the sourcing step — a web-search/LLM (or Apollo) call that stalls must
+  // not hang the whole handoff. Whatever came back by the deadline gets verified.
+  const source = useApollo && cfg.apolloKey ? apolloSearch(cfg.apolloKey, criteria) : brain.prospect(criteria);
+  const raw = await withDeadline(source.catch(() => [] as Prospect[]), 210_000, [] as Prospect[]);
   return verifyProspects(raw, brain);
 }
 
@@ -243,47 +246,89 @@ export async function findProspects(criteria: string, cfg: AppConfig, brain: Big
  * for a provided (often role) address, confirm the domain can receive mail. Drop
  * anyone we can't confirm a deliverable address for — they can't be campaigned.
  */
+// Resolve with a fallback if the promise doesn't settle in time — a hard budget
+// so one slow/tarpitting mail server can't stall the whole verification batch.
+function withDeadline<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const t = setTimeout(() => { if (!settled) { settled = true; resolve(fallback); } }, ms);
+    p.then((v) => { if (!settled) { settled = true; clearTimeout(t); resolve(v); } })
+      .catch(() => { if (!settled) { settled = true; clearTimeout(t); resolve(fallback); } });
+  });
+}
+
 async function verifyProspects(list: Prospect[], brain: BigDogBrain): Promise<Prospect[]> {
   const out: Prospect[] = [];
   // Cap concurrency — each lead does pattern-learning + an SMTP probe.
   const CHUNK = 4;
+  // Overall wall-clock ceiling for the batch; whatever's verified by then wins,
+  // the rest are left unverified rather than blocking the pipeline forever.
+  const deadline = Date.now() + 90_000;
   for (let i = 0; i < list.length; i += CHUNK) {
-    const batch = await Promise.all(list.slice(i, i + CHUNK).map((p) => verifyOne(p, brain).catch(() => null)));
+    if (Date.now() > deadline) { for (const p of list.slice(i)) { const keep = keepUnverified(p); if (keep) out.push(keep); } break; }
+    const batch = await Promise.all(list.slice(i, i + CHUNK).map((p) => verifyOne(p, brain).catch(() => keepUnverified(p))));
     for (const r of batch) if (r) out.push(r);
   }
   return out;
 }
 
+// A lead we couldn't SMTP-confirm but whose domain can receive mail: keep the
+// best-pattern address, clearly flagged for review — never auto-sent. Drops only
+// if there's no mail-receiving domain at all (genuinely undeliverable).
+function keepUnverified(p: Prospect): Prospect | null {
+  const domain = p.domain ? domainFromUrl(p.domain) ?? p.domain : (p.email && p.email.includes('@') ? p.email.split('@')[1]! : '');
+  if (!domain) return null;
+  let email = p.email && p.email.includes('@') ? p.email : '';
+  if (!email) {
+    const parts = (p.name || '').trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return null;
+    email = guessEmail(parts[0]!, parts.length >= 2 ? parts[parts.length - 1]! : '', domain).email;
+  }
+  return { ...p, email, verifyStatus: 'unverified', notes: `${p.notes ? p.notes + ' · ' : ''}⚠ pattern guess — needs review (not verified)` };
+}
+
 async function verifyOne(p: Prospect, brain: BigDogBrain): Promise<Prospect | null> {
   const domain = p.domain ? domainFromUrl(p.domain) ?? p.domain : (p.email && p.email.includes('@') ? p.email.split('@')[1]! : '');
   if (!domain) return null;
+  // The one hard filter: the domain must be able to receive mail at all. No MX ⇒
+  // undeliverable ⇒ drop. (Bounded so a slow DNS server can't stall us either.)
+  const host = await withDeadline(mxHost(domain).catch(() => null), 6000, null);
+  if (!host) return null;
   const parts = (p.name || '').trim().split(/\s+/).filter(Boolean);
   const useApi = verifierConfigured(); // HTTPS verifier works even with port 25 blocked
 
   // Prefer a confirmed personal address. With an API verifier, skip the (blocked)
   // SMTP probe and let the API confirm; otherwise fall back to the SMTP probe.
+  // Hard-bounded so a tarpit can't hold the whole batch open.
   if (parts.length >= 2) {
-    const r = await findContactEmail({ name: p.name, domain }, brain, { verify: !useApi }).catch(() => null);
-    if (r && r.email && (r.confidence === 'verified' || r.confidence === 'guess')) {
-      const status = r.confidence === 'verified' ? 'verified' : 'deliverable';
-      const mark = status === 'verified' ? '✓ verified' : '✓ deliverable (pattern)';
-      return { ...p, email: r.email, verifyStatus: status, notes: `${p.notes ? p.notes + ' · ' : ''}${mark} — ${r.method}` };
+    const r = await withDeadline(findContactEmail({ name: p.name, domain }, brain, { verify: !useApi }).catch(() => null), 12000, null);
+    if (r && r.email) {
+      if (r.confidence === 'verified' || r.confidence === 'guess') {
+        const status = r.confidence === 'verified' ? 'verified' : 'deliverable';
+        const mark = status === 'verified' ? '✓ verified' : '✓ deliverable (pattern)';
+        return { ...p, email: r.email, verifyStatus: status, notes: `${p.notes ? p.notes + ' · ' : ''}${mark} — ${r.method}` };
+      }
+      // SMTP couldn't confirm, but the domain accepts mail — keep the best guess
+      // for review rather than discarding the lead. Not auto-sent.
+      return { ...p, email: r.email, verifyStatus: 'unverified', notes: `${p.notes ? p.notes + ' · ' : ''}⚠ pattern guess — needs review (${r.method})` };
     }
   }
 
   // Otherwise judge a provided (role/company) address.
   if (p.email && p.email.includes('@')) {
     if (useApi) {
-      const v = await verifyAddress(p.email).catch(() => null);
+      const v = await withDeadline(verifyAddress(p.email).catch(() => null), 10000, null);
       if (v?.status === 'valid') return { ...p, verifyStatus: 'verified', notes: `${p.notes ? p.notes + ' · ' : ''}✓ verified (${v.provider})` };
       if (v?.status === 'catch-all') return { ...p, verifyStatus: 'catch-all', notes: `${p.notes ? p.notes + ' · ' : ''}✓ deliverable — catch-all (${v.provider})` };
       if (v?.status === 'invalid') return null;
-      // 'unknown' → fall through to the MX check below
+      // 'unknown' → fall through: the domain has MX, so it's deliverable.
     }
-    const host = await mxHost(p.email.split('@')[1]!).catch(() => null);
-    if (host) return { ...p, verifyStatus: 'deliverable', notes: `${p.notes ? p.notes + ' · ' : ''}✓ company address — domain accepts mail` };
+    return { ...p, verifyStatus: 'deliverable', notes: `${p.notes ? p.notes + ' · ' : ''}✓ company address — domain accepts mail` };
   }
-  return null; // couldn't confirm a deliverable address → drop
+
+  // A name + a mail-receiving domain, but no confirmable address — keep a
+  // best-pattern guess for review instead of dropping the lead entirely.
+  return keepUnverified(p);
 }
 
 export function activeProvider(cfg: AppConfig): { name: string; ready: boolean } {
